@@ -72,6 +72,7 @@ def register_hal(uri='http://www.example.com/',
                                      uri=uri)
 
 
+
 def test_HALNavigator__creation():
     N = HN.HALNavigator('http://www.example.com')
     assert type(N) == HN.HALNavigator
@@ -850,3 +851,85 @@ def test_HALNavigator__default_curie_iana_conflict(reltest_links):
         N = HN.HALNavigator(index_uri, curie="xx")
 
         assert N['next'] is N['xx:next']
+
+## Embedded tests follow
+        
+index_uri = 'http://example.com/api/'
+
+def page(name, number):
+    return {
+        '_links': {
+            'self': {
+                'href': index_uri + name + '/' + str(number),
+                'name': name + str(number),
+            },
+            'next': {'href': index_uri + name + '/' + str(number + 1)},
+        },
+        name + '_data': name + ' data here',
+        'number': number,
+    }
+
+
+def register_hal_page(doc, **kwargs):
+    httpretty.HTTPretty.register_uri(
+        kwargs.get('method', 'GET'),
+        body=json.dumps(doc),
+        uri=doc['_links']['self']['href'],
+        **kwargs
+    )
+
+
+@pytest.fixture
+def http(request):
+    httpretty.HTTPretty.enable()
+    def finalizer():
+        httpretty.HTTPretty.disable()
+        httpretty.HTTPretty.reset()
+    request.addfinalizer(finalizer)
+    return httpretty.HTTPretty
+
+
+@pytest.fixture
+def posts(http):
+    _posts = [page('post', x) for x in xrange(3)]
+    for post in _posts:
+        register_hal_page(post)
+    return _posts
+
+@pytest.fixture
+def comments():
+    comments = [page('comments', x) for x in xrange(3)]
+    for comment in comments:
+        del comment['_links']['self']
+    return comments
+
+@pytest.fixture
+def index_page(comments, posts, http):
+    doc = {
+        '_links': {
+            'curies': [{
+                'name': 'xx',
+                'href': index_uri + 'rels/{rel}',
+                'templated': True,
+            }],
+            'self': {'href': index_uri},
+            'first': posts[0]['_links']['self'],
+            'xx:second': posts[1]['_links']['self'],
+            'xx:posts': [post['_links']['self'] for post in posts]
+        },
+        'data': 'Some data here',
+        '_embedded': {
+            'xx:posts': posts,
+            'xx:comments': comments,
+        }
+    }
+    register_hal_page(doc)
+    return doc
+
+def uri_of(doc):
+    return doc['_links']['self']['href']
+
+def test_HALNavigator__embedded_empty(index_page, comments, http):
+    N = HN.HALNavigator(uri_of(index_page))
+
+    assert len(N['xx:comments']) == len(comments)
