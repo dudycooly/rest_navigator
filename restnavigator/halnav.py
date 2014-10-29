@@ -104,6 +104,7 @@ class HALNavigator(object):
         self.template_args = None
         self.parameters = None
         self.templated = False
+        self.method = 'GET'
         self._links = None
         # This is the identity map shared by all descendents of this
         # HALNavigator
@@ -336,7 +337,7 @@ class HALNavigator(object):
         `json_cls` is a JSONEncoder to use rather than the standard
         `headers` are additional headers to send in the request'''
 
-        response = self.get_http_response( self.session.post,
+        response = self.get_http_response( self.session.delete,
                                             body,
                                             raise_exc,
                                             content_type,
@@ -344,6 +345,11 @@ class HALNavigator(object):
                                             headers,
         )
 
+        if response.status_code in (httplib.ACCEPTED,
+                                    httplib.FOUND,
+                                    httplib.SEE_OTHER,
+        ) and 'Location' in response.headers:
+            return self._copy(uri=response.headers['Location'])
         if response.status_code == httplib.OK:
             ''' Only status code, returns some description '''
             return HALResponse(parent=self, response=response)
