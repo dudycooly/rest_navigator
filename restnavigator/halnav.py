@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 from __future__ import unicode_literals
+from restnavigator.constants import POSITIVE_STATUS_CODES, DELETE
 
 __version__ = '0.2'
 
@@ -22,6 +23,7 @@ import uritemplate
 
 from restnavigator import exc, utils
 
+ALLOWED_STATUS_CODES = {}
 
 def autofetch(fn):
     '''A decorator used by Navigators that fetches the resource if necessary
@@ -49,7 +51,7 @@ def get_state(hal_body):
 class HALNavigator(object):
     '''The main navigation entity'''
 
-    # See PostResponse for a non-idempotent Navigator
+    # See HALResponse for a non-idempotent Navigator
     idempotent = True
 
     def __init__(self, root,
@@ -242,7 +244,7 @@ class HALNavigator(object):
         else:
             return self.state.copy()
 
-    def create(self,
+    def post(self,
                body,
                raise_exc=True,
                content_type='application/json',
@@ -276,8 +278,51 @@ class HALNavigator(object):
                                     httplib.SEE_OTHER,
                                     ) and 'Location' in response.headers:
             return self._copy(uri=response.headers['Location'])
+        if response.status_code == httplib.OK:
+            #Expected only httplib.OK which has some description
+            #Else we might be catching errored response
+            return HALResponse(parent=self, response=response)
         else:
-            return PostResponse(parent=self, response=response)
+            ''' Ignore otherwise '''
+            pass
+
+    create = post
+
+    def delete(self,
+               body=None,
+               raise_exc=True,
+               content_type='application/json',
+               json_cls=None,
+               headers=None,
+               ):
+        '''Performs an HTTP DELETE to the server, to delete resource(s).
+        `body` may either be a string or a dictionary which will be serialized
+            as json
+        `content_type` may be modified if necessary
+        `json_cls` is a JSONEncoder to use rather than the standard
+        `headers` are additional headers to send in the request'''
+
+        if isinstance(body, dict):
+            body = json.dumps(body, cls=json_cls, separators=(',', ':'))
+        headers = {} if headers is None else headers
+        headers['Content-Type'] = content_type
+        response = self.session.post(
+            self.uri, data=body, headers=headers, allow_redirects=False)
+
+        if raise_exc and not response:
+            raise HALNavigatorError(
+                message=response.text,
+                status=response.status_code,
+                nav=self,
+                response=response,
+            )
+        elif response.status_code == httplib.OK:
+            ''' Only status code, returns some description '''
+            return HALResponse(parent=self, response=response)
+        else:
+            ''' Ignore silently otherwise '''
+            pass
+
 
     def __iter__(self):
         '''Part of iteration protocol'''
@@ -369,12 +414,12 @@ class HALNavigator(object):
         print('opening', doc_url)
         webbrowser.open(doc_url)
 
-class PostResponse(HALNavigator):
-    '''A Special Navigator that is the result of a POST
+class HALResponse(HALNavigator):
+    '''A Special Navigator that is the result of a non-GET
 
     This Navigator cannot be fetched or created, but has a special
     property called `.parent` that refers to the Navigator this one
-    was created from. If the result of the POST is a HAL document,
+    was created from. If the result is a HAL document,
     this object's `.links` property will be populated.
 
     '''
@@ -396,7 +441,7 @@ class PostResponse(HALNavigator):
         self.template_uri = parent.template_uri
         self.template_args = parent.template_args
         self.parameters = None  # POST doesn't have parameters
-        self.templated = False  # PostResponse can't be templated
+        self.templated = False  # HALResponse can't be templated
         self._id_map = parent._id_map
         try:
             body = json.loads(response.text)
