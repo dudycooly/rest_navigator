@@ -63,6 +63,20 @@ def template_uri_check(fn):
 
     return wrapped
 
+def method_validation(allowed_list):
+    def wrap(f):
+        def wrapped(self,*args, **qargs):
+            if qargs['strict'] and self.method.upper() not in allowed_list:
+                raise HALNavigatorError(u'{} is possible for resources with methods {}.'
+                                        u'{} is the only allowed methods for {}'.format(f.__name__,
+                                                                                        allowed_list,
+                                                                                        self.method,
+                                                                                        self.uri),
+                                        nav=self,
+                )
+            f(self, *args, **qargs)
+        return wrapped
+    return wrap
 
 class HALNavigator(object):
     '''The main navigation entity'''
@@ -195,9 +209,11 @@ class HALNavigator(object):
 
 
     @template_uri_check
-    def fetch(self, raise_exc=True):
+    @method_validation(allowed_list=['GET'])
+    def fetch(self, raise_exc=True, strict=True):
         '''Like __call__, but doesn't cache, always makes the request'''
         self.response = self.session.get(self.uri)
+
         try:
             body = json.loads(self.response.text)
         except ValueError:
@@ -253,9 +269,9 @@ class HALNavigator(object):
     def __ne__(self, other):
         return not self == other
 
-    def __call__(self, raise_exc=True):
+    def __call__(self, raise_exc=True, strict=True):
         if self.response is None:
-            return self.fetch(raise_exc=raise_exc)
+            return self.fetch(raise_exc=raise_exc, strict=strict)
         else:
             return self.state.copy()
 
@@ -287,6 +303,7 @@ class HALNavigator(object):
         return response
 
     @template_uri_check
+    @method_validation(allowed_list=['POST'])
     def post(self,
              body,
              raise_exc=True,
@@ -323,6 +340,8 @@ class HALNavigator(object):
 
     create = post
 
+    @template_uri_check
+    @method_validation(allowed_list=['DELETE'])
     def delete(self,
                body=None,
                raise_exc=True,
@@ -473,9 +492,10 @@ class HALResponse(HALNavigator):
         self.response = response
         self.template_uri = parent.template_uri
         self.template_args = parent.template_args
-        self.parameters = None  # POST doesn't have parameters
+        self.parameters = None  # HALResponse doesn't have parameters
         self.templated = False  # HALResponse can't be templated
         self._id_map = parent._id_map
+        self.method = None
         try:
             body = json.loads(response.text)
             self.state = get_state(body)
@@ -494,12 +514,12 @@ class HALResponse(HALNavigator):
     def __call__(self, *args, **kwargs):
         return self.state.copy()
 
-    def create(self, *args, **kwargs):
+    def post(self, *args, **kwargs):
         raise NotImplementedError(
             'Cannot create a non-idempotent resource. '
             'Maybe you want this object\'s .parent attribute, '
             'or possibly one of the resources in .links')
-
+    create = post
 
 class HALNavigatorError(Exception):
     '''Raised when a response is an error
