@@ -299,7 +299,6 @@ class HALNavigator(object):
             '''
                 Expected hits:
                 CREATED or Redirection without Locaiton,
-                NO_CONTENT = 204
                 ACCEPTED = 202 and
                 4xx, 5xx errors.
 
