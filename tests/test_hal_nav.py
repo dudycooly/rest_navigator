@@ -641,7 +641,7 @@ def test_OrphanResource__basic(status, body, content_type):
     with httprettify() as HTTPretty:
         index_uri = 'http://www.example.com/api/'
         hosts_uri = index_uri + 'hosts'
-        index_links = {'hosts': {'href': hosts_uri, 'method': 'POST'}}
+        index_links = {'hosts': {'href': hosts_uri}}
         register_hal(index_uri, index_links)
         HTTPretty.register_uri(
             'POST',
