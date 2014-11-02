@@ -653,29 +653,29 @@ def test_HALResponse__basic(status, body, content_type):
 
         N = HN.HALNavigator(index_uri)
         N2 = N['hosts']
-        PR = N2.create({})  # PR = HALResponse
+        OR = N2.create({})  # PR = OrphanResource
 
-        assert isinstance(PR, HN.HALResponse)
-        assert PR.status[0] == status
-        assert PR.parent is N2
+        assert isinstance(OR, HN.OrphanResource)
+        assert OR.status[0] == status
+        assert OR.parent is N2
 
         with pytest.raises(NotImplementedError):
-            PR.fetch()
+            OR.fetch()
         with pytest.raises(NotImplementedError):
-            PR.create({'values': True, 'hi': 'there'})
+            OR.create({'values': True, 'hi': 'there'})
         if status == 200 and content_type == 'text/plain':
-            assert PR.state == {}
-            assert PR.response.text == 'hi there'
+            assert OR.state == {}
+            assert OR.response.text == 'hi there'
         elif content_type == 'application/json':
-            assert PR.state == {'hi': 'there'}
+            assert OR.state == {'hi': 'there'}
         elif content_type == 'application/hal+json':
-            assert 'alternate' in PR.links
-            assert PR.links['alternate'].uri == 'http://www.example.com/hogo'
+            assert 'alternate' in OR.links
+            assert OR.links['alternate'].uri == 'http://www.example.com/hogo'
         elif status == 204:
-            assert PR.state == {}
-            assert PR.links == {}
+            assert OR.state == {}
+            assert OR.links == {}
 
-        assert PR() == PR.state
+        assert OR() == OR.state
 
 
 def test_HALNavigator__relative_links():

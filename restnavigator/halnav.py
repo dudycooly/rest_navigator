@@ -67,7 +67,7 @@ def template_uri_check(fn):
 class HALNavigator(object):
     '''The main navigation entity'''
 
-    # See HALResponse for a non-idempotent Navigator
+    # See OrphanResource for a non-idempotent Navigator
     idempotent = True
 
     def __init__(self, root,
@@ -104,7 +104,6 @@ class HALNavigator(object):
         self.template_args = None
         self.parameters = None
         self.templated = False
-        self.method = 'GET'
         self._links = None
         # This is the identity map shared by all descendents of this
         # HALNavigator
@@ -319,7 +318,7 @@ class HALNavigator(object):
         else:
             # response.status_code  in [httplib.OK, httplib.NO_CONTENT]
             # Expected only httplib.OK has some description
-            return HALResponse(parent=self, response=response)
+            return OrphanResource(parent=self, response=response)
 
     create = post
 
@@ -352,7 +351,7 @@ class HALNavigator(object):
             return self._copy(uri=response.headers['Location'])
         if response.status_code == httplib.OK:
             ''' Only status code, returns some description '''
-            return HALResponse(parent=self, response=response)
+            return OrphanResource(parent=self, response=response)
 
 
     def __iter__(self):
@@ -447,7 +446,7 @@ class HALNavigator(object):
         webbrowser.open(doc_url)
 
 
-class HALResponse(HALNavigator):
+class OrphanResource(HALNavigator):
     '''A Special Navigator that is the result of a non-GET
 
     This Navigator cannot be fetched or created, but has a special
@@ -473,8 +472,8 @@ class HALResponse(HALNavigator):
         self.response = response
         self.template_uri = parent.template_uri
         self.template_args = parent.template_args
-        self.parameters = None  # POST doesn't have parameters
-        self.templated = False  # HALResponse can't be templated
+        self.parameters = None
+        self.templated = False  # OrphanResource can't be templated
         self._id_map = parent._id_map
         try:
             body = json.loads(response.text)
