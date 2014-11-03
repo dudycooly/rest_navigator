@@ -146,10 +146,10 @@ def test_HALNavigator__call():
         register_hal(uri=uri, state=server_state, title='Example Title')
 
         N = HN.HALNavigator(uri)
-        assert N.state is None
+        assert N._state is None
         assert N() == server_state
-        assert N.state == N()
-        assert N.state is not N()
+        assert N._state == N()
+        assert N._state is not N()
         assert N() is not N()
 
 
@@ -701,18 +701,18 @@ def test_OrphanResource__basic(status, body, content_type):
         with pytest.raises(NotImplementedError):
             OR.create({'values': True, 'hi': 'there'})
         if status == 200 and content_type == 'text/plain':
-            assert OR.state == {}
+            assert OR._state == {}
             assert OR.response.text == 'hi there'
         elif content_type == 'application/json':
-            assert OR.state == {'hi': 'there'}
+            assert OR._state == {'hi': 'there'}
         elif content_type == 'application/hal+json':
             assert 'alternate' in OR.links
             assert OR.links['alternate'].uri == 'http://www.example.com/hogo'
         elif status == 204:
-            assert OR.state == {}
+            assert OR._state == {}
             assert OR.links == {}
 
-        assert OR() == OR.state
+        assert OR() == OR._state
 
 
 def test_HALNavigator__relative_links():

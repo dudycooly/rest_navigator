@@ -42,8 +42,8 @@ def default_headers():
             'User-Agent': 'HALNavigator/{}'.format(__version__)}
 
 
-def get_state(hal_body):
-    '''Removes HAL special properties from a HAL+JSON response'''
+def retrieve_state(hal_body):
+    '''Retrieves HAL special state from a HAL+JSON response'''
     return {k: v for k, v in hal_body.iteritems()
             if k not in ['_links']}
 
@@ -99,12 +99,12 @@ class HALNavigator(object):
         if headers:
             self.session.headers.update(headers)
         self.response = None
-        self.state = None
         self.template_uri = None
         self.template_args = None
         self.parameters = None
         self.templated = False
         self._links = None
+        self._state = None
         # This is the identity map shared by all descendents of this
         # HALNavigator
         self._id_map = WeakValueDictionary({self.root: self})
@@ -156,6 +156,26 @@ class HALNavigator(object):
         if self.response is not None:
             return (self.response.status_code, self.response.reason)
 
+    @classmethod
+    def init_with_hal_json(cls, root_uri, hal_response, self_uri=None):
+        root_uri = utils.fix_scheme(root_uri)
+
+        try:
+             hal_json = json.loads(hal_response)
+        except ValueError:
+            raise UnexpectedlyNotJSON('Need a valid HAL-JSON to instantiate the Navigator',hal_response)
+
+        if self_uri is None:
+            try:
+                self_uri = urlparse.urljoin(root_uri,hal_json['_links']['self']['href'])
+            except KeyError:
+                raise exc.MissingRootUriError('NEITHER self URI is supplied NOR supplied json contains one')
+
+        _halnavigator = cls(self_uri)
+        _halnavigator.parse_hal_json_to_set_navigator_characteristics(hal_json)
+        return _halnavigator
+
+
     def _make_links_from(self, body):
         '''Creates linked navigators from a HAL response body'''
 
@@ -192,6 +212,15 @@ class HALNavigator(object):
              if rel not in ['self', 'curies']})
 
 
+    def parse_hal_json_to_set_navigator_characteristics(self, body):
+        self._links = self._make_links_from(body)
+        self.title = (body.get('_links', {})
+                      .get('self', {})
+                      .get('title', self.title))
+        if 'curies' in body.get('_links', {}):
+            curies = body['_links']['curies']
+            self.curies = {curie['name']: curie['href'] for curie in curies}
+        self._state = retrieve_state(body)
 
     @template_uri_check
     def fetch(self, raise_exc=True):
@@ -205,21 +234,16 @@ class HALNavigator(object):
                     "The resource at {.uri} wasn't valid JSON", self.response)
             else:
                 return
-        self._links = self._make_links_from(body)
-        self.title = (body.get('_links', {})
-                      .get('self', {})
-                      .get('title', self.title))
-        if 'curies' in body.get('_links', {}):
-            curies = body['_links']['curies']
-            self.curies = {curie['name']: curie['href'] for curie in curies}
-        self.state = get_state(body)
+
+        self.parse_hal_json_to_set_navigator_characteristics(body)
+
         if raise_exc and not self.response:
             raise HALNavigatorError(self.response.text,
                                     status=self.status,
                                     nav=self,
                                     response=self.response,
             )
-        return self.state.copy()
+        return self._state
 
     def _copy(self, **kwargs):
         '''Creates a shallow copy of the HALNavigator that extra attributes can
@@ -234,7 +258,7 @@ class HALNavigator(object):
         cp = copy.copy(self)
         cp._links = None
         cp.response = None
-        cp.state = None
+        cp._state = None
         cp.fetched = False
         for attr, val in kwargs.iteritems():
             if val is not None:
@@ -252,11 +276,17 @@ class HALNavigator(object):
     def __ne__(self, other):
         return not self == other
 
+    # Currently there is conflicting use of raise_exc in auto-fetch
+    # We should be able to use auto-fetch, once we sort that out
     def __call__(self, raise_exc=True):
         if self.response is None:
             return self.fetch(raise_exc=raise_exc)
         else:
-            return self.state.copy()
+            return self._state.copy()
+
+    @property
+    def state(self):
+        return self.__call__()
 
     def get_http_response(self,
                             http_method_fn,
@@ -481,10 +511,10 @@ class OrphanResource(HALNavigator):
         self._id_map = parent._id_map
         try:
             body = json.loads(response.text)
-            self.state = get_state(body)
+            self._state = retrieve_state(body)
             self._links = parent._make_links_from(body)
         except ValueError:
-            self.state = {}
+            self._state = {}
             self._links = utils.LinkDict(parent.default_curie, {})
 
 
@@ -495,7 +525,7 @@ class OrphanResource(HALNavigator):
             'or possibly one of the resources in .links')
 
     def __call__(self, *args, **kwargs):
-        return self.state.copy()
+        return self._state.copy()
 
     def create(self, *args, **kwargs):
         raise NotImplementedError(

@@ -14,3 +14,7 @@ class ZachMorrisException(ValueError):
 class AmbiguousNavigationError(StandardError):
     '''Raised when attempting to dereference a templated Navigator'''
     pass
+
+class MissingRootUriError(StandardError):
+    '''Raised when attempting to retrieve root uri from hal json supplied'''
+    pass
