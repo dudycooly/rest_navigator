@@ -3,5 +3,6 @@
 .#*
 .coverage
 htmlcov
+.idea/
 .pyflymakerc*
 dist/
