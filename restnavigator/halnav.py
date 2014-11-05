@@ -63,6 +63,30 @@ def template_uri_check(fn):
 
     return wrapped
 
+class HALNavigatorError(Exception):
+    '''Raised when a response is an error
+
+    Has all of the attributes of a normal HALNavigator. The error body can be
+    returned by examining response.body '''
+
+    def __init__(self, message, nav=None, status=None, response=None):
+        self.nav = nav
+        self.response = response
+        self.message = message
+        self.status = status
+        super(HALNavigatorError, self).__init__(message)
+
+
+class UnexpectedlyNotJSON(TypeError):
+    '''Raised when a non-json parseable resource is gotten'''
+
+    def __init__(self, msg, response):
+        self.msg = msg
+        self.response = response
+
+    def __repr__(self):  # pragma: nocover
+        return '{.msg}:\n\n\n{.response}'.format(self)
+
 
 class HALNavigator(object):
     '''The main navigation entity'''
@@ -109,10 +133,10 @@ class HALNavigator(object):
         # HALNavigator
         self._id_map = WeakValueDictionary({self.root: self})
 
-    @property
-    def cacheable(self):
-        '''Whether this Navigator can be cached'''
-        return self.idempotent and not self.templated
+
+    def authenticate(self, auth):
+        '''Allows setting authentication for future requests to the api'''
+        self.session.auth = auth
 
     def __repr__(self):
         def path_clean(chunk):
@@ -130,9 +154,77 @@ class HALNavigator(object):
         return "{cls}({name}{path})".format(
             cls=type(self).__name__, name=self.apiname, path=path)
 
-    def authenticate(self, auth):
-        '''Allows setting authentication for future requests to the api'''
-        self.session.auth = auth
+    def __eq__(self, other):
+        try:
+            return self.uri == other.uri and self.apiname == other.apiname
+        except Exception:
+            return False
+
+    def __ne__(self, other):
+        return not self == other
+
+    @autofetch
+    def __nonzero__(self):
+        # we override normal exception throwing since the user seems interested
+        # in the boolean value
+        return bool(self.response)
+
+    def __getitem__(self, getitem_args):
+        r'''Subselector for a HALNavigator'''
+
+        @autofetch
+        def dereference(n, rels):
+            '''Helper to recursively dereference'''
+            if len(rels) == 1:
+                ret = n._links[rels[0]]
+                if isinstance(ret, list):
+                    if len(ret) == 1:
+                        return ret[0]
+                    else:
+                        return [r._copy() if r.templated else r for r in ret]
+                else:
+                    return ret._copy() if ret.templated else ret
+            else:
+                return dereference(n[rels[0]], rels[1:])
+
+        rels, qargs, slug, ellipsis = utils.normalize_getitem_args(
+            getitem_args)
+        if slug and ellipsis:
+            raise SyntaxError("':' and '...' syntax cannot be combined!")
+        if rels:
+            n = dereference(self, rels)
+        else:
+            n = self
+        if qargs or slug:
+            n = n.expand(_keep_templated=ellipsis, **qargs)
+        return n
+
+    # Currently there is conflicting use of raise_exc in auto-fetch
+    # We should be able to use auto-fetch, once we sort that out
+    def __call__(self, raise_exc=True):
+        if self.response is None:
+            return self.fetch(raise_exc=raise_exc)
+        else:
+            return self._state.copy()
+
+    def __iter__(self):
+        '''Part of iteration protocol'''
+        yield self
+        last = self
+        while True:
+            current = last.next()
+            yield current
+            last = current
+
+    @property
+    def state(self):
+        return self.__call__()
+
+    @property
+    def cacheable(self):
+        '''Whether this Navigator can be cached'''
+        return self.idempotent and not self.templated
+
 
     @property
     def relative_uri(self):
@@ -156,6 +248,25 @@ class HALNavigator(object):
         if self.response is not None:
             return (self.response.status_code, self.response.reason)
 
+    def next(self):
+        try:
+            return self['next']
+        except KeyError:
+            raise StopIteration()
+
+    @autofetch
+    def docsfor(self, rel):
+        '''Obtains the documentation for a link relation. Opens in a webbrowser
+        window'''
+        prefix, _rel = rel.split(':')
+        if prefix in self.curies:
+            doc_url = uritemplate.expand(self.curies[prefix], {'rel': _rel})
+        else:
+            doc_url = rel
+        print('opening', doc_url)
+        webbrowser.open(doc_url)
+
+
     @classmethod
     def init_with_hal_json(cls, root_uri, hal_response, self_uri=None):
         root_uri = utils.fix_scheme(root_uri)
@@ -163,7 +274,7 @@ class HALNavigator(object):
         try:
              hal_json = json.loads(hal_response)
         except ValueError:
-            raise UnexpectedlyNotJSON('Need a valid HAL-JSON to instantiate the Navigator',hal_response)
+            raise UnexpectedlyNotJSON('Need a valid HAL-JSON to initialise the Navigator',hal_response)
 
         if self_uri is None:
             try:
@@ -174,6 +285,57 @@ class HALNavigator(object):
         _halnavigator = cls(self_uri)
         _halnavigator.parse_hal_json_to_set_navigator_characteristics(hal_json)
         return _halnavigator
+
+
+    def expand(self, _keep_templated=False, **kwargs):
+        '''Expand template args in a templated Navigator.
+
+        if :_keep_templated: is True, the resulting Navigator can be further
+        expanded. A Navigator created this way is not part of the id map.
+        '''
+
+        if not self.templated:
+            raise TypeError(
+                "This Navigator isn't templated! You can't expand it.")
+
+        for k, v in kwargs.iteritems():
+            if v == 0:
+                kwargs[k] = '0'  # uritemplate expands 0's to empty string
+
+        if self.template_args is not None:
+            kwargs.update(self.template_args)
+        cp = self._copy(uri=uritemplate.expand(self.template_uri, kwargs),
+                        templated=_keep_templated,
+        )
+        if not _keep_templated:
+            cp.template_uri = None
+            cp.template_args = None
+        else:
+            cp.template_args = kwargs
+
+        return cp
+
+    def _copy(self, **kwargs):
+        '''Creates a shallow copy of the HALNavigator that extra attributes can
+        be set on.
+
+        If the object is already in the identity map, that object is returned
+        instead.
+        If the object is templated, it doesn't go into the id_map
+        '''
+        if 'uri' in kwargs and kwargs['uri'] in self._id_map:
+            return self._id_map[kwargs['uri']]
+        cp = copy.copy(self)
+        cp._links = None
+        cp.response = None
+        cp._state = None
+        cp.fetched = False
+        for attr, val in kwargs.iteritems():
+            if val is not None:
+                setattr(cp, attr, val)
+        if cp.cacheable:
+            self._id_map[cp.uri] = cp
+        return cp
 
 
     def _make_links_from(self, body):
@@ -222,71 +384,6 @@ class HALNavigator(object):
             self.curies = {curie['name']: curie['href'] for curie in curies}
         self._state = retrieve_state(body)
 
-    @template_uri_check
-    def fetch(self, raise_exc=True):
-        '''Like __call__, but doesn't cache, always makes the request'''
-        self.response = self.session.get(self.uri)
-        try:
-            body = json.loads(self.response.text)
-        except ValueError:
-            if raise_exc:
-                raise UnexpectedlyNotJSON(
-                    "The resource at {.uri} wasn't valid JSON", self.response)
-            else:
-                return
-
-        self.parse_hal_json_to_set_navigator_characteristics(body)
-
-        if raise_exc and not self.response:
-            raise HALNavigatorError(self.response.text,
-                                    status=self.status,
-                                    nav=self,
-                                    response=self.response,
-            )
-        return self._state
-
-    def _copy(self, **kwargs):
-        '''Creates a shallow copy of the HALNavigator that extra attributes can
-        be set on.
-
-        If the object is already in the identity map, that object is returned
-        instead.
-        If the object is templated, it doesn't go into the id_map
-        '''
-        if 'uri' in kwargs and kwargs['uri'] in self._id_map:
-            return self._id_map[kwargs['uri']]
-        cp = copy.copy(self)
-        cp._links = None
-        cp.response = None
-        cp._state = None
-        cp.fetched = False
-        for attr, val in kwargs.iteritems():
-            if val is not None:
-                setattr(cp, attr, val)
-        if cp.cacheable:
-            self._id_map[cp.uri] = cp
-        return cp
-
-    def __eq__(self, other):
-        try:
-            return self.uri == other.uri and self.apiname == other.apiname
-        except Exception:
-            return False
-
-    def __ne__(self, other):
-        return not self == other
-
-    # Currently there is conflicting use of raise_exc in auto-fetch
-    # We should be able to use auto-fetch, once we sort that out
-    def __call__(self, raise_exc=True):
-        if self.response is None:
-            return self.fetch(raise_exc=raise_exc)
-        else:
-            return self._state.copy()
-
-    @property
-    def state(self):
-        return self.__call__()
 
     def get_http_response(self,
                             http_method_fn,
@@ -336,6 +433,32 @@ class HALNavigator(object):
 
                 '''
             return self.status
+
+
+
+    @template_uri_check
+    def fetch(self, raise_exc=True):
+        '''Like __call__, but doesn't cache, always makes the request'''
+        self.response = self.session.get(self.uri)
+        try:
+            body = json.loads(self.response.text)
+        except ValueError:
+            if raise_exc:
+                raise UnexpectedlyNotJSON(
+                    "The resource at {.uri} wasn't valid JSON", self.response)
+            else:
+                return
+
+        self.parse_hal_json_to_set_navigator_characteristics(body)
+
+        if raise_exc and not self.response:
+            raise HALNavigatorError(self.response.text,
+                                    status=self.status,
+                                    nav=self,
+                                    response=self.response,
+            )
+        return self._state
+
 
     @template_uri_check
     def create(self,
@@ -387,97 +510,6 @@ class HALNavigator(object):
         )
 
         return self.create_navigator_or_orphan_resource_based_on_status_code(response)
-
-    def __iter__(self):
-        '''Part of iteration protocol'''
-        yield self
-        last = self
-        while True:
-            current = last.next()
-            yield current
-            last = current
-
-    @autofetch
-    def __nonzero__(self):
-        # we override normal exception throwing since the user seems interested
-        # in the boolean value
-        return bool(self.response)
-
-    def next(self):
-        try:
-            return self['next']
-        except KeyError:
-            raise StopIteration()
-
-    def expand(self, _keep_templated=False, **kwargs):
-        '''Expand template args in a templated Navigator.
-
-        if :_keep_templated: is True, the resulting Navigator can be further
-        expanded. A Navigator created this way is not part of the id map.
-        '''
-
-        if not self.templated:
-            raise TypeError(
-                "This Navigator isn't templated! You can't expand it.")
-
-        for k, v in kwargs.iteritems():
-            if v == 0:
-                kwargs[k] = '0'  # uritemplate expands 0's to empty string
-
-        if self.template_args is not None:
-            kwargs.update(self.template_args)
-        cp = self._copy(uri=uritemplate.expand(self.template_uri, kwargs),
-                        templated=_keep_templated,
-        )
-        if not _keep_templated:
-            cp.template_uri = None
-            cp.template_args = None
-        else:
-            cp.template_args = kwargs
-
-        return cp
-
-    def __getitem__(self, getitem_args):
-        r'''Subselector for a HALNavigator'''
-
-        @autofetch
-        def dereference(n, rels):
-            '''Helper to recursively dereference'''
-            if len(rels) == 1:
-                ret = n._links[rels[0]]
-                if isinstance(ret, list):
-                    if len(ret) == 1:
-                        return ret[0]
-                    else:
-                        return [r._copy() if r.templated else r for r in ret]
-                else:
-                    return ret._copy() if ret.templated else ret
-            else:
-                return dereference(n[rels[0]], rels[1:])
-
-        rels, qargs, slug, ellipsis = utils.normalize_getitem_args(
-            getitem_args)
-        if slug and ellipsis:
-            raise SyntaxError("':' and '...' syntax cannot be combined!")
-        if rels:
-            n = dereference(self, rels)
-        else:
-            n = self
-        if qargs or slug:
-            n = n.expand(_keep_templated=ellipsis, **qargs)
-        return n
-
-    @autofetch
-    def docsfor(self, rel):
-        '''Obtains the documentation for a link relation. Opens in a webbrowser
-        window'''
-        prefix, _rel = rel.split(':')
-        if prefix in self.curies:
-            doc_url = uritemplate.expand(self.curies[prefix], {'rel': _rel})
-        else:
-            doc_url = rel
-        print('opening', doc_url)
-        webbrowser.open(doc_url)
 
 
 class OrphanResource(HALNavigator):
@@ -532,28 +564,3 @@ class OrphanResource(HALNavigator):
             'Cannot create a non-idempotent resource. '
             'Maybe you want this object\'s .parent attribute, '
             'or possibly one of the resources in .links')
-
-
-class HALNavigatorError(Exception):
-    '''Raised when a response is an error
-
-    Has all of the attributes of a normal HALNavigator. The error body can be
-    returned by examining response.body '''
-
-    def __init__(self, message, nav=None, status=None, response=None):
-        self.nav = nav
-        self.response = response
-        self.message = message
-        self.status = status
-        super(HALNavigatorError, self).__init__(message)
-
-
-class UnexpectedlyNotJSON(TypeError):
-    '''Raised when a non-json parseable resource is gotten'''
-
-    def __init__(self, msg, response):
-        self.msg = msg
-        self.response = response
-
-    def __repr__(self):  # pragma: nocover
-        return '{.msg}:\n\n\n{.response}'.format(self)
