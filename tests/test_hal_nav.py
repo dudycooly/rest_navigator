@@ -1,18 +1,17 @@
 from __future__ import print_function
 
+import httpretty
 import json
+import pytest
 import re
 import contextlib
 import random
 import string
 
-import httpretty
-import pytest
 import uritemplate
+import requests.auth
 
 import restnavigator.halnav as HN
-
-
 
 # pylint: disable-msg=E1101
 
@@ -22,7 +21,6 @@ def random_string():
     def rs():
         while True:
             yield ''.join(random.sample(string.ascii_letters, 6))
-
     return rs()
 
 
@@ -47,7 +45,7 @@ def register_hal(uri='http://www.example.com/',
                  method='GET',
                  headers=None,
                  status=200,
-):
+                 ):
     '''Convenience function that registers a hal document at a given address'''
 
     def body_callback(_meth, req_uri, req_headers):
@@ -120,10 +118,10 @@ def test_HALNAvigator__repr():
         assert repr(N) == "HALNavigator(exampleAPI)"
         assert repr(N['first']) == "HALNavigator(exampleAPI.first)"
         assert repr(N['next']) == \
-               "HALNavigator(exampleAPI.foos.123f.bars[234])"
+            "HALNavigator(exampleAPI.foos.123f.bars[234])"
         assert repr(N['last']) == "HALNavigator(exampleAPI.last)"
         assert repr(N['describes']) == \
-               "HALNavigator(exampleAPI.users.kozuscek)"
+          "HALNavigator(exampleAPI.users.kozuscek)"
 
 
 def test_HALNavigator__links():
@@ -131,7 +129,7 @@ def test_HALNavigator__links():
         register_hal('http://www.example.com/',
                      links={'ht:users': {
                          'href': 'http://www.example.com/users'}}
-        )
+                     )
         N = HN.HALNavigator('http://www.example.com')
         expected = {
             'ht:users': HN.HALNavigator('http://www.example.com')['ht:users']
@@ -146,10 +144,10 @@ def test_HALNavigator__call():
         register_hal(uri=uri, state=server_state, title='Example Title')
 
         N = HN.HALNavigator(uri)
-        assert N._state is None
+        assert N.state is None
         assert N() == server_state
-        assert N._state == N()
-        assert N._state is not N()
+        assert N.state == N()
+        assert N.state is not N()
         assert N() is not N()
 
 
@@ -285,11 +283,6 @@ def test_HALNavigator__dont_get_template_links():
             assert N['page': 0]  # N is not templated
         with pytest.raises(HN.exc.AmbiguousNavigationError):
             assert N['first']()  # N['first'] is templated
-        with pytest.raises(HN.exc.AmbiguousNavigationError):
-            assert N['first'].create()  # N['first'] is templated
-        with pytest.raises(HN.exc.AmbiguousNavigationError):
-            assert N['first'].delete()  # N['first'] is templated
-
         assert N['first'].templated
         assert N['first']['page': 0].uri == 'http://www.example.com/?page=0'
         assert not N['first']['page':0].templated
@@ -315,7 +308,7 @@ def test_HALNavigator__getitem_gauntlet():
         assert expanded_nav.uri == uritemplate.expand(template_href,
                                                       {'max': 1, 'page': '0'})
         assert N['first'].expand(page=0, max=1) == expanded_nav
-        assert N['first']['page': 0].uri == uritemplate \
+        assert N['first']['page': 0].uri == uritemplate\
             .expand(template_href, {'page': '0'})
         assert N['first', :].uri == uritemplate.expand(
             template_href, variables={})
@@ -575,14 +568,15 @@ def test_HALNavigator__fetch():
         assert fetch3['name'] == 'body2'
 
 
-@pytest.mark.parametrize(('redirect_status', 'post_body'), [
+@pytest.mark.parametrize(('status_code', 'post_body'), [
     (302, {'name': 'foo'}),
     (303, {'name': 'foo'}),
-    (201, {'name': 'foo'}),
-    (202, {'name': 'foo'}),
     (303, '{"name":"foo"}'),
+    (201, ''),
+    (204, {'name': 'foo'}),
+
 ])
-def test_HALNavigator__create(redirect_status, post_body):
+def test_HALNavigator__create_response_with_new_resource_location(status_code, post_body):
     with httprettify() as HTTPretty:
         index_uri = 'http://www.example.com/api/'
         hosts_uri = index_uri + 'hosts'
@@ -591,90 +585,56 @@ def test_HALNavigator__create(redirect_status, post_body):
         register_hal(index_uri, index_links)
         register_hal(new_resource_uri)
         HTTPretty.register_uri('POST',
-                               uri=hosts_uri,
-                               location=new_resource_uri,
-                               status=redirect_status,
-        )
-        N = HN.HALNavigator(index_uri)
-        N2 = N['hosts'].create(post_body)
-        assert HTTPretty.last_request.method == 'POST'
-        last_content_type = HTTPretty.last_request.headers['content-type']
-        assert last_content_type == 'application/json'
-        assert HTTPretty.last_request.body == '{"name":"foo"}'
-        assert N2.uri == new_resource_uri
-        assert not N2.fetched
-
-@pytest.mark.parametrize(('redirect_status', 'post_body'), [
-    (302, {'name': 'foo'}),
-    (303, {'name': 'foo'}),
-    (201, {'name': 'foo'}),
-    (202, {'name': 'foo'}),
-    (303, '{"name":"foo"}'),
-])
-
-def test_HALNavigator__create(redirect_status, post_body):
-    with httprettify() as HTTPretty:
-        index_uri = 'http://www.example.com/api/'
-        hosts_uri = index_uri + 'hosts'
-        new_resource_uri = index_uri + 'new_resource'
-        index_links = {'hosts': {'href': hosts_uri}}
-        register_hal(index_uri, index_links)
-        register_hal(new_resource_uri)
-        HTTPretty.register_uri('POST',
-                               uri=hosts_uri,
-                               location=new_resource_uri,
-                               status=redirect_status,
-        )
-        N = HN.HALNavigator(index_uri)
-        N2 = N['hosts'].create(post_body)
-        assert HTTPretty.last_request.method == 'POST'
-        last_content_type = HTTPretty.last_request.headers['content-type']
-        assert last_content_type == 'application/json'
-        assert HTTPretty.last_request.body == '{"name":"foo"}'
-        assert N2.uri == new_resource_uri
-        assert not N2.fetched
-
-@pytest.mark.parametrize(('status_code', 'delete_body'), [
-    (204, ''),
-    (202, {'name': 'foo'}),
-    (302, {'name': 'foo'}),
-    (303, {'name': 'foo'}),
-    (303, '{"name":"foo"}'),
-])
-def test_HALNavigator__delete(status_code, delete_body):
-    with httprettify() as HTTPretty:
-        index_uri = 'http://www.example.com/api/'
-        hosts_uri = index_uri + 'hosts'
-        new_resource_uri = index_uri + 'new_resource'
-        index_links = {'hosts': {'href': hosts_uri, 'method': 'DELETE'}}
-        register_hal(index_uri, index_links)
-        register_hal(new_resource_uri)
-        HTTPretty.register_uri('DELETE',
                                uri=hosts_uri,
                                location=new_resource_uri,
                                status=status_code,
-        )
+                               )
         N = HN.HALNavigator(index_uri)
-        N2 = N['hosts'].delete(delete_body)
-        assert HTTPretty.last_request.method == 'DELETE'
+        N2 = N['hosts'].create(post_body)
+        assert HTTPretty.last_request.method == 'POST'
         last_content_type = HTTPretty.last_request.headers['content-type']
         assert last_content_type == 'application/json'
-        if status_code == 204:
+        if status_code == 201:
             assert HTTPretty.last_request.body == ''
         else:
             assert HTTPretty.last_request.body == '{"name":"foo"}'
         assert N2.uri == new_resource_uri
         assert not N2.fetched
 
+@pytest.mark.parametrize(('status_code', 'status_reason'), [
+    (302, 'Found'),
+    (303, 'See Other'),
+    (201, 'Created'),
+    (202, 'Accepted'),
+    (204, 'No Content'),
+])
+
+def test_HALNavigator__create_response_without_location_info(status_code,  status_reason):
+    with httprettify() as HTTPretty:
+        index_uri = 'http://www.example.com/api/'
+        hosts_uri = index_uri + 'hosts'
+        post_body = {'name': 'foo'}
+        index_links = {'hosts': {'href': hosts_uri}}
+        register_hal(index_uri, index_links)
+        HTTPretty.register_uri('POST',
+                               uri=hosts_uri,
+                               status=status_code,
+                               )
+        N = HN.HALNavigator(index_uri)
+        N2 = N['hosts'].create(post_body)
+        assert HTTPretty.last_request.method == 'POST'
+        assert N2 == (status_code, status_reason,)
+
+
 
 @pytest.mark.parametrize(('status', 'body', 'content_type'), [
     (200, 'hi there', 'text/plain'),
     (200, '{"hi": "there"}', 'application/json'),
     (200,
-     json.dumps({'_links': {'alternate': {'href': '/hogo'}},
-                 "hi": "there"}), 'application/hal+json'),
+     json.dumps({'_links': {'alternate': {'href': '/hogo'}}}),
+     'application/hal+json'),
 ])
-def test_OrphanResource__basic(status, body, content_type):
+def test_NonIdempotentResponse__basic(status, body, content_type):
     with httprettify() as HTTPretty:
         index_uri = 'http://www.example.com/api/'
         hosts_uri = index_uri + 'hosts'
@@ -690,29 +650,28 @@ def test_OrphanResource__basic(status, body, content_type):
 
         N = HN.HALNavigator(index_uri)
         N2 = N['hosts']
-        OR = N2.create({})  # OR = OrphanResource
+        NIR = N2.create({})  # NIR = NonIdempotentResponse
 
-        assert isinstance(OR, HN.OrphanResource)
-        assert OR.status[0] == status
-        assert OR.parent is N2
+        assert isinstance(NIR, HN.NonIdempotentResponse)
+        assert NIR.status[0] == status
+        assert NIR.parent is N2
+        assert NIR() == NIR.state
 
         with pytest.raises(NotImplementedError):
-            OR.fetch()
+            NIR.fetch()
         with pytest.raises(NotImplementedError):
-            OR.create({'values': True, 'hi': 'there'})
+            NIR.create({'values': True, 'hi': 'there'})
         if status == 200 and content_type == 'text/plain':
-            assert OR._state == {}
-            assert OR.response.text == 'hi there'
+            assert NIR.state == {}
+            assert NIR.response.text == 'hi there'
         elif content_type == 'application/json':
-            assert OR._state == {'hi': 'there'}
+            assert NIR.state == {'hi': 'there'}
         elif content_type == 'application/hal+json':
-            assert 'alternate' in OR.links
-            assert OR.links['alternate'].uri == 'http://www.example.com/hogo'
+            assert 'alternate' in NIR.links
+            assert NIR.links['alternate'].uri == 'http://www.example.com/hogo'
         elif status == 204:
-            assert OR._state == {}
-            assert OR.links == {}
-
-        assert OR() == OR._state
+            assert NIR.state == {}
+            assert NIR.links == {}
 
 
 def test_HALNavigator__relative_links():
@@ -729,7 +688,7 @@ def test_HALNavigator__relative_links():
         N = HN.HALNavigator(index_uri)
         assert N['about'].uri == 'http://www.example.com/about/'
         assert N['about', 'alternate'].uri == \
-               'http://www.example.com/about/alternate'
+            'http://www.example.com/about/alternate'
         assert N['about']['index'].uri == 'http://www.example.com/about/index'
 
 
@@ -748,7 +707,6 @@ def test_HALNavigator__authenticate(random_string):
                 return (200, headers, json.dumps({'authenticated': True}))
             else:
                 return (401, headers, json.dumps({'authenticated': False}))
-
         register_hal(index_uri, index_links)
         HTTPretty.register_uri('GET', auth_uri, body=auth_callback)
 
@@ -790,7 +748,6 @@ def test_HALNavigator__custom_headers():
         N()
         assert HTTPretty.last_request.headers.get('X-Pizza')
 
-
 @pytest.fixture
 def bigtest_1():
     bigtest = type(str('bigtest_1'), (object,), {})
@@ -806,21 +763,20 @@ def bigtest_1():
              'name': 'bar',
              'title': 'Bar',
              'profile': widget,
-            },
+             },
             {'href': index_uri + 'baz',
              'name': 'baz',
              'title': 'Baz',
              'profile': gadget,
-            },
+             },
             {'href': index_uri + 'qux',
              'name': 'qux',
              'title': 'Qux',
              'profile': widget,
-            },
+             },
         ]
     }
     return bigtest
-
 
 def test_HALNavigator__get_by_properties_single(bigtest_1):
     with httprettify() as HTTPretty:
@@ -835,7 +791,6 @@ def test_HALNavigator__get_by_properties_single(bigtest_1):
         assert bar.uri == bigtest_1.index_links['test:foo'][0]['href']
         assert qux.uri == bigtest_1.index_links['test:foo'][2]['href']
         assert not_found is None
-
 
 def test_HALNavigator__get_by_properties_multi(bigtest_1):
     with httprettify() as HTTPretty:
@@ -858,6 +813,7 @@ def test_HALNavigator__get_by_properties_multi(bigtest_1):
         assert gadgets == [baz]
 
 
+
 @pytest.fixture
 def reltest_links():
     return {
@@ -875,7 +831,6 @@ def reltest_links():
         },
     }
 
-
 def test_HALNavigator__default_curie_noconflict(reltest_links):
     with httprettify() as HTTPretty:
         index_uri = "http://example.com/api"
@@ -887,7 +842,6 @@ def test_HALNavigator__default_curie_noconflict(reltest_links):
         N2 = N['xx:nonstandard-rel']
 
         assert N1 is N2
-
 
 def test_HALNavigator__default_curie_conflict(reltest_links):
     with httprettify() as HTTPretty:
@@ -904,7 +858,6 @@ def test_HALNavigator__default_curie_conflict(reltest_links):
 
         assert N2.uri == 'http://example.com/api/xxnext'
 
-
 def test_HALNavigator__default_curie_wrong_curie(reltest_links):
     with httprettify() as HTTPretty:
         index_uri = "http://example.com/api"
@@ -916,7 +869,6 @@ def test_HALNavigator__default_curie_wrong_curie(reltest_links):
         N2 = N['yy:nonstandard-rel']
 
         assert N1 is not N2
-
 
 def test_HALNavigator__default_curie_iana_conflict(reltest_links):
     with httprettify() as HTTPretty:
