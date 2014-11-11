@@ -146,10 +146,10 @@ def test_HALNavigator__call():
         register_hal(uri=uri, state=server_state, title='Example Title')
 
         N = HN.HALNavigator(uri)
-        assert N._state is None
+        assert N.state is None
         assert N() == server_state
-        assert N._state == N()
-        assert N._state is not N()
+        assert N.state == N()
+        assert N.state is not N()
         assert N() is not N()
 
 
@@ -286,7 +286,7 @@ def test_HALNavigator__dont_get_template_links():
         with pytest.raises(HN.exc.AmbiguousNavigationError):
             assert N['first']()  # N['first'] is templated
         with pytest.raises(HN.exc.AmbiguousNavigationError):
-            assert N['first'].create()  # N['first'] is templated
+            assert N['first'].create({})  # N['first'] is templated
         with pytest.raises(HN.exc.AmbiguousNavigationError):
             assert N['first'].delete()  # N['first'] is templated
 
@@ -604,7 +604,7 @@ def test_HALNavigator__create(redirect_status, post_body):
         assert N2.uri == new_resource_uri
         assert not N2.fetched
 
-@pytest.mark.parametrize(('redirect_status', 'post_body'), [
+@pytest.mark.parametrize(('status_code', 'post_body'), [
     (302, {'name': 'foo'}),
     (303, {'name': 'foo'}),
     (201, {'name': 'foo'}),
@@ -612,7 +612,7 @@ def test_HALNavigator__create(redirect_status, post_body):
     (303, '{"name":"foo"}'),
 ])
 
-def test_HALNavigator__create(redirect_status, post_body):
+def test_HALNavigator__create(status_code, post_body):
     with httprettify() as HTTPretty:
         index_uri = 'http://www.example.com/api/'
         hosts_uri = index_uri + 'hosts'
@@ -623,7 +623,7 @@ def test_HALNavigator__create(redirect_status, post_body):
         HTTPretty.register_uri('POST',
                                uri=hosts_uri,
                                location=new_resource_uri,
-                               status=redirect_status,
+                               status=status_code,
         )
         N = HN.HALNavigator(index_uri)
         N2 = N['hosts'].create(post_body)
@@ -631,8 +631,11 @@ def test_HALNavigator__create(redirect_status, post_body):
         last_content_type = HTTPretty.last_request.headers['content-type']
         assert last_content_type == 'application/json'
         assert HTTPretty.last_request.body == '{"name":"foo"}'
-        assert N2.uri == new_resource_uri
-        assert not N2.fetched
+        if status_code == 202:
+            assert N2 is None
+        else:
+            assert N2.uri == new_resource_uri
+            assert not N2.fetched
 
 @pytest.mark.parametrize(('status_code', 'delete_body'), [
     (204, ''),
@@ -663,8 +666,11 @@ def test_HALNavigator__delete(status_code, delete_body):
             assert HTTPretty.last_request.body == ''
         else:
             assert HTTPretty.last_request.body == '{"name":"foo"}'
-        assert N2.uri == new_resource_uri
-        assert not N2.fetched
+        if status_code == 202:
+            assert N2 is None
+        else:
+            assert N2.uri == new_resource_uri
+            assert not N2.fetched
 
 
 @pytest.mark.parametrize(('status', 'body', 'content_type'), [
@@ -674,7 +680,7 @@ def test_HALNavigator__delete(status_code, delete_body):
      json.dumps({'_links': {'alternate': {'href': '/hogo'}},
                  "hi": "there"}), 'application/hal+json'),
 ])
-def test_OrphanResource__basic(status, body, content_type):
+def test_NonIdempotentResponse__basic(status, body, content_type):
     with httprettify() as HTTPretty:
         index_uri = 'http://www.example.com/api/'
         hosts_uri = index_uri + 'hosts'
@@ -690,29 +696,29 @@ def test_OrphanResource__basic(status, body, content_type):
 
         N = HN.HALNavigator(index_uri)
         N2 = N['hosts']
-        OR = N2.create({})  # OR = OrphanResource
+        NIPR = N2.create({})  # NIPR = NonIdempotentResponse
 
-        assert isinstance(OR, HN.OrphanResource)
-        assert OR.status[0] == status
-        assert OR.parent is N2
+        assert isinstance(NIPR, HN.NonIdempotentResponse)
+        assert NIPR.status[0] == status
+        assert NIPR.parent is N2
 
         with pytest.raises(NotImplementedError):
-            OR.fetch()
+            NIPR.fetch()
         with pytest.raises(NotImplementedError):
-            OR.create({'values': True, 'hi': 'there'})
+            NIPR.create({'values': True, 'hi': 'there'})
         if status == 200 and content_type == 'text/plain':
-            assert OR._state == {}
-            assert OR.response.text == 'hi there'
+            assert NIPR.state == {}
+            assert NIPR.response.text == 'hi there'
         elif content_type == 'application/json':
-            assert OR._state == {'hi': 'there'}
+            assert NIPR.state == {'hi': 'there'}
         elif content_type == 'application/hal+json':
-            assert 'alternate' in OR.links
-            assert OR.links['alternate'].uri == 'http://www.example.com/hogo'
+            assert 'alternate' in NIPR.links
+            assert NIPR.links['alternate'].uri == 'http://www.example.com/hogo'
         elif status == 204:
-            assert OR._state == {}
-            assert OR.links == {}
+            assert NIPR.state == {}
+            assert NIPR.links == {}
 
-        assert OR() == OR._state
+        assert NIPR() == NIPR.state
 
 
 def test_HALNavigator__relative_links():

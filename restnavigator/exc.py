@@ -15,6 +15,7 @@ class AmbiguousNavigationError(StandardError):
     '''Raised when attempting to dereference a templated Navigator'''
     pass
 
-class MissingRootUriError(StandardError):
-    '''Raised when attempting to retrieve root uri from hal json supplied'''
+class HALJSONParseError(StandardError):
+
+    '''Raised when attempting to retrieve a property (link, state, embedded) from hal json supplied'''
     pass
