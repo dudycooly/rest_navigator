@@ -58,6 +58,7 @@ def linewrap(chunks, width=None, sep=' ', preamble='', line_prefix=''):
 
     return gen()
 
+
 def emit_iana_rels(rels_url):
     '''Fetches the IANA link relation registry'''
     text = requests.get(rels_url).text.encode('ascii', 'ignore')
@@ -81,6 +82,7 @@ def emit_iana_rels(rels_url):
         print('    ),')
     print('}')
 
+
 def emit_iana_tlds(tlds_url):
     lines = requests.get(tlds_url).text.splitlines()
     regex = re.compile('Version (?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})')
@@ -88,7 +90,7 @@ def emit_iana_tlds(tlds_url):
 
     print('# Obtained from', tlds_url)
     print('# TLDs last updated: {year}-{month}-{day}\n'.format(**pieces))
-    
+
     def fixup(tld):
         if tld.startswith('XN--'):
             ret = tld.encode('ascii')[4:].decode('punycode')
@@ -101,6 +103,7 @@ def emit_iana_tlds(tlds_url):
                              preamble='tlds = set([',
                              sep=', ')), end='])\n')
 
+
 def emit_preamble():
     print('# -*- coding: utf-8 -*-')
     print('from __future__ import unicode_literals')
@@ -108,6 +111,7 @@ def emit_preamble():
     print()
     print('# This file generated on:', datetime.date.today())
     print()
+
 
 def main():
     # location where registry is stored in xml format

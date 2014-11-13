@@ -121,7 +121,7 @@ def test_HALNAvigator__repr():
             "HALNavigator(exampleAPI.foos.123f.bars[234])"
         assert repr(N['last']) == "HALNavigator(exampleAPI.last)"
         assert repr(N['describes']) == \
-          "HALNavigator(exampleAPI.users.kozuscek)"
+            "HALNavigator(exampleAPI.users.kozuscek)"
 
 
 def test_HALNavigator__links():
@@ -601,6 +601,7 @@ def test_HALNavigator__create_response_with_new_resource_location(status_code, p
         assert N2.uri == new_resource_uri
         assert not N2.fetched
 
+
 @pytest.mark.parametrize(('status_code', 'status_reason'), [
     (302, 'Found'),
     (303, 'See Other'),
@@ -608,7 +609,6 @@ def test_HALNavigator__create_response_with_new_resource_location(status_code, p
     (202, 'Accepted'),
     (204, 'No Content'),
 ])
-
 def test_HALNavigator__create_response_without_location_info(status_code,  status_reason):
     with httprettify() as HTTPretty:
         index_uri = 'http://www.example.com/api/'
@@ -624,7 +624,6 @@ def test_HALNavigator__create_response_without_location_info(status_code,  statu
         N2 = N['hosts'].create(post_body)
         assert HTTPretty.last_request.method == 'POST'
         assert N2 == (status_code, status_reason,)
-
 
 
 @pytest.mark.parametrize(('status', 'body', 'content_type'), [
@@ -748,6 +747,7 @@ def test_HALNavigator__custom_headers():
         N()
         assert HTTPretty.last_request.headers.get('X-Pizza')
 
+
 @pytest.fixture
 def bigtest_1():
     bigtest = type(str('bigtest_1'), (object,), {})
@@ -778,6 +778,7 @@ def bigtest_1():
     }
     return bigtest
 
+
 def test_HALNavigator__get_by_properties_single(bigtest_1):
     with httprettify() as HTTPretty:
         register_hal(bigtest_1.index_uri, bigtest_1.index_links)
@@ -791,6 +792,7 @@ def test_HALNavigator__get_by_properties_single(bigtest_1):
         assert bar.uri == bigtest_1.index_links['test:foo'][0]['href']
         assert qux.uri == bigtest_1.index_links['test:foo'][2]['href']
         assert not_found is None
+
 
 def test_HALNavigator__get_by_properties_multi(bigtest_1):
     with httprettify() as HTTPretty:
@@ -813,7 +815,6 @@ def test_HALNavigator__get_by_properties_multi(bigtest_1):
         assert gadgets == [baz]
 
 
-
 @pytest.fixture
 def reltest_links():
     return {
@@ -831,6 +832,7 @@ def reltest_links():
         },
     }
 
+
 def test_HALNavigator__default_curie_noconflict(reltest_links):
     with httprettify() as HTTPretty:
         index_uri = "http://example.com/api"
@@ -842,6 +844,7 @@ def test_HALNavigator__default_curie_noconflict(reltest_links):
         N2 = N['xx:nonstandard-rel']
 
         assert N1 is N2
+
 
 def test_HALNavigator__default_curie_conflict(reltest_links):
     with httprettify() as HTTPretty:
@@ -858,6 +861,7 @@ def test_HALNavigator__default_curie_conflict(reltest_links):
 
         assert N2.uri == 'http://example.com/api/xxnext'
 
+
 def test_HALNavigator__default_curie_wrong_curie(reltest_links):
     with httprettify() as HTTPretty:
         index_uri = "http://example.com/api"
@@ -869,6 +873,7 @@ def test_HALNavigator__default_curie_wrong_curie(reltest_links):
         N2 = N['yy:nonstandard-rel']
 
         assert N1 is not N2
+
 
 def test_HALNavigator__default_curie_iana_conflict(reltest_links):
     with httprettify() as HTTPretty:

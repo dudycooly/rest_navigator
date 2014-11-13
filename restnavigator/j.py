@@ -41,6 +41,6 @@ hal_response = json.dumps({"_links": {
     }
 }})
 
-N  = HALNavigator.init_with_hal_json('http://localhost:8082',hal_response)
+N = HALNavigator.init_with_hal_json('http://localhost:8082', hal_response)
 
 print N.links

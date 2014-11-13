@@ -142,10 +142,11 @@ def namify(root_uri):
     return '{pieces}{api}{vrsn}'.format(pieces=''.join(pieces),
                                         api='API' if formatargs['api'] else '',
                                         vrsn=''.join(formatargs['version']),
-    )
+                                        )
 
 
 class LinkList(list):
+
     '''A list subclass that offers different ways of grabbing the values based
     on various metadata stored for each entry in the dictionary.
 
@@ -195,6 +196,7 @@ class LinkList(list):
 
 
 class LinkDict(dict):
+
     '''dict subclass that allows specifying a default curie. This
     enables multiple ways to access an item'''
 
@@ -204,8 +206,8 @@ class LinkDict(dict):
 
     def __getitem__(self, key):
         if (':' in key
-            or (key in self and key in registry.iana_rels)
-            or self.default_curie is None):
+                or (key in self and key in registry.iana_rels)
+                or self.default_curie is None):
             return super(LinkDict, self).__getitem__(key)
         implicit_key = '{}:{}'.format(self.default_curie, key)
         return super(LinkDict, self).__getitem__(implicit_key)
