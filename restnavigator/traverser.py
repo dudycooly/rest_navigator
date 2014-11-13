@@ -1,6 +1,8 @@
 from restnavigator import HALNavigator
 
+
 class HALTraversor(object):
+
     def __init__(self, root_uri):
         self.navigator = HALNavigator(root_uri)
         self.template_parameters = None
@@ -21,14 +23,17 @@ class HALTraversor(object):
         for alias, request_options_dict in default_options.iteritems():
             self.request_options_dict[alias] = request_options_dict
             for header_option in default_options.keys():
-                self.request_options_dict[alias].setdefault(header_option, default_options[header_option])
+                self.request_options_dict[alias].setdefault(
+                    header_option, default_options[header_option])
         return self
 
     def apply_request_options(self, rel_name=None, method=None):
         if self.request_options_dict is not None:
-            request_options = self._select_info_for_a_sequence(self.request_options_dict, method, rel_name)
+            request_options = self._select_info_for_a_sequence(
+                self.request_options_dict, method, rel_name)
             if 'headers' in request_options:
-                self.navigator.session.headers.update(request_options['headers'])
+                self.navigator.session.headers.update(
+                    request_options['headers'])
             self.navigator.session.auth = request_options.get('auth')
             self.request_body = request_options.get('body')
 
@@ -38,7 +43,7 @@ class HALTraversor(object):
         self.template_parameters = dict(kwargs)
         return self
 
-    def _execute_check(self,method=None,rel_name=None):
+    def _execute_check(self, method=None, rel_name=None):
         """
 
             A condition or nested conditions can be defined for a rel name, http_method_name or as default
@@ -62,15 +67,16 @@ class HALTraversor(object):
                         ]
         """
         if self.conditions_dict is not None:
-            conditions = self._select_info_for_a_sequence(self.conditions_dict, method, rel_name)
+            conditions = self._select_info_for_a_sequence(
+                self.conditions_dict, method, rel_name)
             for condition in conditions:
-                attr,assertion = condition
-                if isinstance(attr,basestring):
+                attr, assertion = condition
+                if isinstance(attr, basestring):
                     attr = getattr(attr)
 
-                if hasattr(assertion,'__call__'):
+                if hasattr(assertion, '__call__'):
                     response = assertion(attr)
-                    name = '{}({})'.format(assertion.__name__,attr)
+                    name = '{}({})'.format(assertion.__name__, attr)
                 else:
                     response = attr == assertion
                     name = attr
@@ -82,11 +88,8 @@ class HALTraversor(object):
     @staticmethod
     def _select_info_for_a_sequence(info_set={}, method=None, rel_name=None):
         return info_set.get(rel_name) \
-               or info_set.get(method) \
-               or info_set.get('default', {})
-
-
-
+            or info_set.get(method) \
+            or info_set.get('default', {})
 
     def with_conditions(self, **conditions_dict):
         """
@@ -189,11 +192,12 @@ class HALTraversor(object):
 #                                                                               'ht:posts',
 #                                                                               'ht:author')
 
-J= HALTraversor('http://0.0.0.0:7777/')
+J = HALTraversor('http://0.0.0.0:7777/')
 template_parameters = {'channel': 'online',
                        'date': '2014-11-03',
-                       'static_id':'BOX_PACKAGE'}
-chset =  J.with_template_parameters(**template_parameters).follow(('create_basket','post'),'products')
+                       'static_id': 'BOX_PACKAGE'}
+chset = J.with_template_parameters(
+    **template_parameters).follow(('create_basket', 'post'), 'products')
 print chset.links
 
 from pprint import pprint
