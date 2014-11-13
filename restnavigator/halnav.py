@@ -135,7 +135,7 @@ class HALNavigator(object):
 
         _halnavigator = cls(root_uri)
         _halnavigator.response = hal_response
-        _halnavigator._populate_hal_properties(hal_json)
+        _halnavigator._populate_navigator_properties(hal_json)
 
         return _halnavigator
 
@@ -236,9 +236,9 @@ class HALNavigator(object):
                     if len(ret) == 1:
                         return ret[0]
                     else:
-                        return [r._copy() if r.templated else r for r in ret]
+                        return [r._make_nav() if r.templated else r for r in ret]
                 else:
-                    return ret._copy() if ret.templated else ret
+                    return ret._make_nav() if ret.templated else ret
             else:
                 return dereference(n[rels[0]], rels[1:])
 
@@ -266,13 +266,13 @@ class HALNavigator(object):
         print('opening', doc_url)
         webbrowser.open(doc_url)
 
-    def _make_links_from(self, body):
+    def _make_linked_nav_from(self, body):
         """Creates linked navigators from a HAL response body"""
 
-        def make_nav(link):
-            """Crafts the Navigators for each link"""
+        def process_links(link):
+            """Extract URI from each link to craft the Navigators """
             if isinstance(link, list):
-                return utils.LinkList((make_nav(lnk), lnk) for lnk in link)
+                return utils.LinkList((process_links(lnk), lnk) for lnk in link)
             templated = link.get('templated', False)
             if not templated:
                 uri = urlparse.urljoin(self.uri, link['href'])
@@ -281,7 +281,7 @@ class HALNavigator(object):
                 uri = None
                 template_uri = urlparse.urljoin(self.uri, link['href'])
             method = link.get('method','GET')
-            cp = self._copy(
+            cp = self._make_nav(
                 uri=uri,
                 template_uri=template_uri,
                 templated=templated,
@@ -299,12 +299,12 @@ class HALNavigator(object):
 
         return utils.LinkDict(
             self.default_curie,
-            {rel: make_nav(links)
+            {rel: process_links(links)
              for rel, links in body.get('_links', {}).iteritems()
              if rel not in ['self', 'curies']})
 
-    def _populate_hal_properties(self, body):
-        self._links = self._make_links_from(body)
+    def _populate_navigator_properties(self, body):
+        self._links = self._make_linked_nav_from(body)
         self.title = (body.get('_links', {})
                       .get('self', {})
                       .get('title', self.title))
@@ -313,16 +313,9 @@ class HALNavigator(object):
             self.curies = {curie['name']: curie['href'] for curie in curies}
         self.state = self.get_state(body)
 
-    def _copy(self, **kwargs):
-        """Creates a shallow copy of the HALNavigator that extra attributes can
-        be set on.
-
-        If the object is already in the identity map, that object is returned
-        instead.
-        If the object is templated, it doesn't go into the id_map
-        """
-        if 'uri' in kwargs and kwargs['uri'] in self._id_map:
-            return self._id_map[kwargs['uri']]
+    def clone_navigator(self, kwargs):
+        """ Creates a shallow copy of the HALNavigator that extra attributes can
+        be set on."""
         cp = copy.copy(self)
         cp._links = None
         cp.response = None
@@ -331,6 +324,17 @@ class HALNavigator(object):
         for attr, val in kwargs.iteritems():
             if val is not None:
                 setattr(cp, attr, val)
+        return cp
+
+    def _make_nav(self, **kwargs):
+        """
+        If the object is already in the identity map, that object is returned
+        instead.
+        If the object is templated, it doesn't go into the id_map
+        """
+        if 'uri' in kwargs and kwargs['uri'] in self._id_map:
+            return self._id_map[kwargs['uri']]
+        cp = self.clone_navigator(kwargs)
         if cp.cacheable:
             self._id_map[cp.uri] = cp
         return cp
@@ -356,7 +360,7 @@ class HALNavigator(object):
 
         if self.template_args is not None:
             kwargs.update(self.template_args)
-        cp = self._copy(uri=uritemplate.expand(self.template_uri, kwargs),
+        cp = self._make_nav(uri=uritemplate.expand(self.template_uri, kwargs),
                         templated=_keep_templated)
         if not _keep_templated:
             cp.template_uri = None
@@ -372,8 +376,7 @@ class HALNavigator(object):
                           raise_exc=True,
                           content_type='application/json',
                           json_cls=None,
-                          headers=None,
-                          strict=True):
+                          headers=None):
         """
             Fetches HTTP response using http method (POST or DELETE of requests.Session)
         resource. Returns a new HALNavigator representing that resource.
@@ -406,7 +409,7 @@ class HALNavigator(object):
                                          httplib.FOUND,
                                          httplib.SEE_OTHER,
                                          httplib.NO_CONTENT) and 'Location' in self.response.headers:
-            return self._copy(uri=self.response.headers['Location'])
+            return self._make_nav(uri=self.response.headers['Location'])
         elif self.response.status_code == httplib.OK:
             return NonIdempotentResponse(parent=self, response=self.response)
         else:
@@ -424,10 +427,10 @@ class HALNavigator(object):
 
     @template_uri_check
     @restrict_to('GET')
-    def fetch(self, raise_exc=True, strict=True):
+    def fetch(self, raise_exc=True):
         """Like __call__, but doesn't cache, always makes the request"""
         self.get_http_response(
-            self.session.get, raise_exc=raise_exc, strict=strict)
+            self.session.get, raise_exc=raise_exc)
 
         try:
             body = json.loads(self.response.text)
@@ -438,7 +441,7 @@ class HALNavigator(object):
             else:
                 return
 
-        self._populate_hal_properties(body)
+        self._populate_navigator_properties(body)
 
         return self.state.copy()
 
@@ -483,30 +486,28 @@ class NonIdempotentResponse(HALNavigator):
     """
 
     idempotent = False
+    #
+    # def __new__(cls, parent, response, *args, **kwargs):
+    #     attributes = dict(type = response.headers['Content-Type'],
+    #                       response = response,
+    #                       parameters = None,  # NonIdempotentResponse doesn't have parameters
+    #                       templated = False,  # NonIdempotentResponse can't be templated
+    #                       method = None)
+    #     instance = parent.clone_navigator(attributes)
+    #     return instance
 
     def __init__(self, parent, response):
         self.parent = parent
-        self.root = parent.root
-        self.apiname = parent.apiname
-        self.uri = parent.uri
-        self.profile = parent.profile
-        self.title = parent.title
         self.type = response.headers['Content-Type']
-        self.default_curie = parent.default_curie
-        self.curies = parent.curies
-        self.session = parent.session
         self.response = response
-        self.template_uri = parent.template_uri
-        self.template_args = parent.template_args
         self.parameters = None  # NonIdempotentResponse doesn't have parameters
         self.templated = False  # NonIdempotentResponse can't be templated
-        self._id_map = parent._id_map
         self.method = None
         self.strict_validation = False
         try:
             body = json.loads(response.text)
             self.state = self.get_state(body)
-            self._links = parent._make_links_from(body)
+            self._links = parent._make_linked_nav_from(body)
         except ValueError:
             self.state = {}
             self._links = utils.LinkDict(parent.default_curie, {})
