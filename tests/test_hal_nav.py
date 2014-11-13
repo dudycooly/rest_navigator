@@ -10,6 +10,7 @@ import string
 
 import uritemplate
 import requests.auth
+from restnavigator.exc import InvalidOperation
 
 import restnavigator.halnav as HN
 
@@ -651,14 +652,15 @@ def test_NonIdempotentResponse__basic(status, body, content_type):
         N2 = N['hosts']
         NIR = N2.create({})  # NIR = NonIdempotentResponse
 
-        assert isinstance(NIR, HN.NonIdempotentResponse)
+        assert isinstance(NIR, HN.HALNavigator)
+       # assert isinstance(NIR, HN.NonIdempotentResponse)
         assert NIR.status[0] == status
         assert NIR.parent is N2
         assert NIR() == NIR.state
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(InvalidOperation):
             NIR.fetch()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(InvalidOperation):
             NIR.create({'values': True, 'hi': 'there'})
         if status == 200 and content_type == 'text/plain':
             assert NIR.state == {}
