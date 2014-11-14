@@ -1,6 +1,8 @@
 __author__ = 'jp'
 import json
+
 from halnav import HALNavigator
+
 
 hal_response = json.dumps({"_links": {
     "self": {

@@ -10,6 +10,7 @@ import string
 
 import uritemplate
 import requests.auth
+from restnavigator.exc import InvalidOperation
 
 import restnavigator.halnav as HN
 
@@ -167,7 +168,7 @@ def test_HALNavigator__getitem_self_link():
         register_hal(uri, title=title)
 
         N = HN.HALNavigator(uri)
-        N()  # fetch it
+        N()  # get it
         assert N.title == title
 
 
@@ -434,7 +435,7 @@ def test_HALNavigator__raise_exc(status, raise_exc):
             with pytest.raises(HN.HALNavigatorError):
                 N['next']()
             try:
-                N['next'].fetch()
+                N['next'].get()
             except HN.HALNavigatorError as hn:
                 assert hn.nav.status[0] == status
         else:
@@ -651,14 +652,15 @@ def test_NonIdempotentResponse__basic(status, body, content_type):
         N2 = N['hosts']
         NIR = N2.create({})  # NIR = NonIdempotentResponse
 
-        assert isinstance(NIR, HN.NonIdempotentResponse)
+        assert isinstance(NIR, HN.HALNavigator)
+       # assert isinstance(NIR, HN.NonIdempotentResponse)
         assert NIR.status[0] == status
         assert NIR.parent is N2
         assert NIR() == NIR.state
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(InvalidOperation):
             NIR.fetch()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(InvalidOperation):
             NIR.create({'values': True, 'hi': 'there'})
         if status == 200 and content_type == 'text/plain':
             assert NIR.state == {}
@@ -722,7 +724,7 @@ def test_HALNavigator__authenticate(random_string):
         N2_auth(raise_exc=False)
         assert N2_auth.status == (401, 'Unauthorized')
         N2.authenticate(toy_auth)
-        assert N2_auth.fetch()['authenticated']
+        assert N2_auth.get()['authenticated']
 
 
 def test_HALNavigator__not_json():

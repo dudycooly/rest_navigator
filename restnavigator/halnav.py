@@ -30,36 +30,49 @@ def default_headers():
             'User-Agent': 'HALNavigator/{}'.format(__version__)}
 
 
-def template_uri_check(fn):
-    """A decorator used by Navigators to confirm the templated uri is supplied with all parameters
-     prior to calling the function """
+def restrict_to(methods=[], templated=None, idempotent=None):
+    """A decorator to restrict Navigator functions based on certain criteria
 
-    @functools.wraps(fn)
-    def wrapped(self, *args, **qargs):
-        if self.templated:
-            raise exc.AmbiguousNavigationError(
-                'This is a templated Navigator. You must provide values for '
-                'the template parameters before fetching the resource or else '
-                'explicitly null them out with the syntax: N[:]')
-        return fn(self, *args, **qargs)
+        method_restriction - Navigator methods dependent on certain http methods
+        checked for Link's http methods
 
-    return wrapped
+       templated - template uri is supplied with all parameters before calling
 
+       idempotent - restricting Navigator with Non Idempotent response
 
-def restrict_to(methods):
-    """A decorator to restrict Navigator functions to a list of http methods"""
+    """
+
     def wrap(fn):
         @functools.wraps(fn)
         def wrapped(self, *args, **qargs):
-            allowed_methods = [methods] if isinstance(methods, basestring) else methods
-            if self.strict_validation:
-                if self.method.lower() not in [method.lower() for method in allowed_methods]:
-                    raise exc.InvalidOperation('"{}" is permitted only for link supporting "{}" methods\n'
-                                               '"{}" supports only "{}"'.format(fn.__name__, str(methods),
-                                                                                self.uri or self.template_uri,
-                                                                                self.method))
+            if idempotent is not None:
+                if self.idempotent != idempotent:
+                    raise exc.InvalidOperation(
+                        'Cannot {} a non-idempotent resource. '
+                        'Maybe you want this object\'s .parent attribute, '
+                        'or possibly one of the resources in .links'.format(fn.__name__))
+
+            if self.method_validation:
+                allowed_methods = [methods] if isinstance(methods, basestring) else methods
+                if allowed_methods is not []:
+                    if self.method.lower() not in [method.lower() for method in allowed_methods]:
+                        raise exc.InvalidOperation('"{}" is permitted only for link supporting "{}" methods\n'
+                                                   'Supported method(s) for {} is "{}"'
+                                                   .format(fn.__name__,
+                                                           str(methods),
+                                                           self.uri or self.template_uri,
+                                                           self.method))
+            if templated is not None:
+                if self.templated:
+                    raise exc.AmbiguousNavigationError(
+                        'This is a templated Navigator. You must provide values for '
+                        'the template parameters before fetching the resource or else '
+                        'explicitly null them out with the syntax: N[:]')
+
             return fn(self, *args, **qargs)
+
         return wrapped
+
     return wrap
 
 
@@ -70,14 +83,13 @@ def autofetch(fn):
     @functools.wraps(fn)
     def wrapped(self, *args, **qargs):
         if self.idempotent and self.response is None:
-            self.fetch(raise_exc=qargs.get('raise_exc', False))
+            self.get(raise_exc=qargs.get('raise_exc', False))
         return fn(self, *args, **qargs)
 
     return wrapped
 
 
 class HALNavigator(object):
-
     """The main navigation entity"""
 
     # See NonIdempotentResponse for a non-idempotent Navigator
@@ -121,7 +133,7 @@ class HALNavigator(object):
         # HALNavigator
         self._id_map = WeakValueDictionary({self.root: self})
         self.method = 'GET'
-        self.strict_validation = False
+        self.method_validation = False
 
     @classmethod
     def init_from_hal_json(cls, root_uri, hal_response):
@@ -138,6 +150,28 @@ class HALNavigator(object):
         _halnavigator._populate_navigator_properties(hal_json)
 
         return _halnavigator
+
+    # NonIdempotentResponse
+    def _create_non_idempotent_response(self):
+
+        attributes = dict(type=self.response.headers['Content-Type'],
+                          response=self.response)
+
+        NIR = self.clone_navigator(attributes)
+        NIR.idempotent = False
+        NIR.parent = self
+        # The following attributes from parent does not applicable for
+        # NonIdempotentResponse
+        NIR.templated = False
+        NIR.parameters = None
+        NIR.method = "NONE"
+
+        NIR.method_validation = True
+        # NonIdempotent Response may have plain text as opposed to hal or json response
+        #hence, turn off exception
+
+        NIR._populate_navigator_properties(raise_exc=False)
+        return NIR
 
     @staticmethod
     def get_state(hal_body):
@@ -280,7 +314,7 @@ class HALNavigator(object):
             else:
                 uri = None
                 template_uri = urlparse.urljoin(self.uri, link['href'])
-            method = link.get('method','GET')
+            method = link.get('method', 'GET')
             cp = self._make_nav(
                 uri=uri,
                 template_uri=template_uri,
@@ -303,7 +337,17 @@ class HALNavigator(object):
              for rel, links in body.get('_links', {}).iteritems()
              if rel not in ['self', 'curies']})
 
-    def _populate_navigator_properties(self, body):
+    def _populate_navigator_properties(self, raise_exc=True):
+        try:
+            body = json.loads(self.response.text)
+        except ValueError:
+            if raise_exc:
+                raise UnexpectedlyNotJSON(
+                    "The resource at {.uri} wasn't valid JSON", self.response)
+            self.state = {}
+            self._links = utils.LinkDict(self.default_curie, {})
+            return
+
         self._links = self._make_linked_nav_from(body)
         self.title = (body.get('_links', {})
                       .get('self', {})
@@ -313,7 +357,7 @@ class HALNavigator(object):
             self.curies = {curie['name']: curie['href'] for curie in curies}
         self.state = self.get_state(body)
 
-    def clone_navigator(self, kwargs):
+    def clone_navigator(self, params):
         """ Creates a shallow copy of the HALNavigator that extra attributes can
         be set on."""
         cp = copy.copy(self)
@@ -321,7 +365,7 @@ class HALNavigator(object):
         cp.response = None
         cp.state = None
         cp.fetched = False
-        for attr, val in kwargs.iteritems():
+        for attr, val in params.iteritems():
             if val is not None:
                 setattr(cp, attr, val)
         return cp
@@ -361,7 +405,7 @@ class HALNavigator(object):
         if self.template_args is not None:
             kwargs.update(self.template_args)
         cp = self._make_nav(uri=uritemplate.expand(self.template_uri, kwargs),
-                        templated=_keep_templated)
+                            templated=_keep_templated)
         if not _keep_templated:
             cp.template_uri = None
             cp.template_args = None
@@ -392,8 +436,10 @@ class HALNavigator(object):
         headers = {} if headers is None else headers
         headers['Content-Type'] = content_type
         self.response = response = http_method_fn(
-            self.uri, data=body, headers=headers, allow_redirects=False)
-
+            self.uri,
+            data=body,
+            headers=headers,
+            allow_redirects=False)
         if raise_exc and not response:
             raise HALNavigatorError(
                 message=response.text,
@@ -403,15 +449,22 @@ class HALNavigator(object):
             )
         return response
 
-    def create_navigator_or_non_idempotent_resp(self):
+
+    def create_navigator_or_non_idempotent_resp(self, method):
 
         if self.response.status_code in (httplib.CREATED,  # Applicable for POST
-                                         httplib.FOUND,
+                                         httplib.FOUND,  # RFC says, redirect should not be allowed other than GET/HEAD
                                          httplib.SEE_OTHER,
                                          httplib.NO_CONTENT) and 'Location' in self.response.headers:
             return self._make_nav(uri=self.response.headers['Location'])
+
         elif self.response.status_code == httplib.OK:
-            return NonIdempotentResponse(parent=self, response=self.response)
+            # Only Status expected to return a HAL Response
+
+            if method.upper() in ['POST', 'DELETE']:
+                return self._create_non_idempotent_response()
+            elif method.upper() == 'GET':
+                return self._populate_navigator_properties()
         else:
             '''
                 Expected hits:
@@ -425,105 +478,41 @@ class HALNavigator(object):
                 '''
             return self.status
 
-    @template_uri_check
-    @restrict_to('GET')
-    def fetch(self, raise_exc=True):
-        """Like __call__, but doesn't cache, always makes the request"""
-        self.get_http_response(
-            self.session.get, raise_exc=raise_exc)
+    def _fetch_hal_and_create_resource(self, http_method_fn,
+                                       body=None,
+                                       raise_exc=True,
+                                       content_type='application/json',
+                                       json_cls=None,
+                                       headers=None, ):
 
-        try:
-            body = json.loads(self.response.text)
-        except ValueError:
-            if raise_exc:
-                raise UnexpectedlyNotJSON(
-                    "The resource at {.uri} wasn't valid JSON", self.response)
-            else:
-                return
-
-        self._populate_navigator_properties(body)
-
-        return self.state.copy()
-
-    @template_uri_check
-    def fetch_hal_and_create_resource(self, http_method_fn,
-                                      body=None,
-                                      raise_exc=True,
-                                      content_type='application/json',
-                                      json_cls=None,
-                                      headers=None,):
         self.get_http_response(http_method_fn,
                                body,
                                raise_exc,
                                content_type,
                                json_cls,
-                               headers,
-                               )
-        return self.create_navigator_or_non_idempotent_resp()
+                               headers)
 
-    @restrict_to('POST')
-    def create(self, *args, **kwargs):
-        """Performs an HTTP POST to the server """
-        return self.fetch_hal_and_create_resource(self.session.post, *args, **kwargs)
-
-    post = create
-
-    @restrict_to('DELETE')
-    def delete(self, **kwargs):
-        """Performs an HTTP DELETE to the server, to delete resource(s)."""
-        return self.fetch_hal_and_create_resource(self.session.delete, **kwargs)
+        return self.create_navigator_or_non_idempotent_resp(http_method_fn.__name__)
 
 
-class NonIdempotentResponse(HALNavigator):
-
-    """A Special Navigator that is the result of a POST
-
-    This Navigator cannot be fetched or created, but has a special
-    property called `.parent` that refers to the Navigator this one
-    was created from. If the result is a HAL document,
-    this object's `.links` property will be populated.
-
-    """
-
-    idempotent = False
-    #
-    # def __new__(cls, parent, response, *args, **kwargs):
-    #     attributes = dict(type = response.headers['Content-Type'],
-    #                       response = response,
-    #                       parameters = None,  # NonIdempotentResponse doesn't have parameters
-    #                       templated = False,  # NonIdempotentResponse can't be templated
-    #                       method = None)
-    #     instance = parent.clone_navigator(attributes)
-    #     return instance
-
-    def __init__(self, parent, response):
-        self.parent = parent
-        self.type = response.headers['Content-Type']
-        self.response = response
-        self.parameters = None  # NonIdempotentResponse doesn't have parameters
-        self.templated = False  # NonIdempotentResponse can't be templated
-        self.method = None
-        self.strict_validation = False
-        try:
-            body = json.loads(response.text)
-            self.state = self.get_state(body)
-            self._links = parent._make_linked_nav_from(body)
-        except ValueError:
-            self.state = {}
-            self._links = utils.LinkDict(parent.default_curie, {})
-
-    def fetch(self, *args, **kwargs):
-        raise NotImplementedError(
-            'Cannot fetch a non-idempotent resource. '
-            'Maybe you want this object\'s .parent attribute, '
-            'or possibly one of the resources in .links')
-
-    def __call__(self, *args, **kwargs):
+    @restrict_to(methods='GET', templated=True)
+    def get(self, raise_exc=True):
+        """Like __call__, but doesn't cache, always makes the request"""
+        # self._fetch_hal_and_create_resource(self.session.get)
+        self.get_http_response(self.session.get, raise_exc=raise_exc)
+        self._populate_navigator_properties(raise_exc)
         return self.state.copy()
 
+    fetch = get
+
+    @restrict_to(methods='POST', templated=True)
     def create(self, *args, **kwargs):
-        raise NotImplementedError(
-            'Cannot create a non-idempotent resource. '
-            'Maybe you want this object\'s .parent attribute, '
-            'or possibly one of the resources in .links')
+        """Performs an HTTP POST to the server, to create source(s) """
+        return self._fetch_hal_and_create_resource(self.session.post, *args, **kwargs)
+
     post = create
+
+    @restrict_to(methods='DELETE', templated=True)
+    def delete(self, *args, **kwargs):
+        """Performs an HTTP DELETE to the server, to delete resource(s)."""
+        return self._fetch_hal_and_create_resource(self.session.delete, *args, **kwargs)
