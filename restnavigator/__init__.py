@@ -1,2 +1,1 @@
-
 from .halnav import HALNavigator

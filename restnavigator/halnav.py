@@ -29,6 +29,7 @@ def default_headers():
     return {'Accept': 'application/hal+json,application/json',
             'User-Agent': 'HALNavigator/{}'.format(__version__)}
 
+
 def restrict_to(methods=[], templated=None, idempotent=None):
     """A decorator to restrict Navigator functions based on certain criteria
 
@@ -82,7 +83,7 @@ def autofetch(fn):
     @functools.wraps(fn)
     def wrapped(self, *args, **qargs):
         if self.idempotent and self.response is None:
-            self.fetch(raise_exc=qargs.get('raise_exc', False))
+            self.get(raise_exc=qargs.get('raise_exc', False))
         return fn(self, *args, **qargs)
 
     return wrapped
@@ -166,13 +167,10 @@ class HALNavigator(object):
         NIR.method = "NONE"
 
         NIR.strict_validation = True
-        try:
-            body = json.loads(self.response.text)
-            NIR.state = NIR.get_state(body)
-            NIR._links = NIR._make_linked_nav_from(body)
-        except ValueError:
-            NIR.state = {}
-            NIR._links = utils.LinkDict(NIR.default_curie, {})
+        # NonIdempotent Response may have plain text as opposed to hal or json response
+        #hence, turn off exception
+
+        NIR._populate_navigator_properties(raise_exc=False)
         return NIR
 
     @staticmethod
@@ -339,7 +337,17 @@ class HALNavigator(object):
              for rel, links in body.get('_links', {}).iteritems()
              if rel not in ['self', 'curies']})
 
-    def _populate_navigator_properties(self, body):
+    def _populate_navigator_properties(self, raise_exc=True):
+        try:
+            body = json.loads(self.response.text)
+        except ValueError:
+            if raise_exc:
+                raise UnexpectedlyNotJSON(
+                    "The resource at {.uri} wasn't valid JSON", self.response)
+            self.state = {}
+            self._links = utils.LinkDict(self.default_curie, {})
+            return
+
         self._links = self._make_linked_nav_from(body)
         self.title = (body.get('_links', {})
                       .get('self', {})
@@ -428,8 +436,10 @@ class HALNavigator(object):
         headers = {} if headers is None else headers
         headers['Content-Type'] = content_type
         self.response = response = http_method_fn(
-            self.uri, data=body, headers=headers, allow_redirects=False)
-
+            self.uri,
+            data=body,
+            headers=headers,
+            allow_redirects=False)
         if raise_exc and not response:
             raise HALNavigatorError(
                 message=response.text,
@@ -439,16 +449,22 @@ class HALNavigator(object):
             )
         return response
 
-    def create_navigator_or_non_idempotent_resp(self):
+
+    def create_navigator_or_non_idempotent_resp(self, method):
 
         if self.response.status_code in (httplib.CREATED,  # Applicable for POST
-                                         httplib.FOUND,
+                                         httplib.FOUND,  # RFC says, redirect should not be allowed other than GET/HEAD
                                          httplib.SEE_OTHER,
                                          httplib.NO_CONTENT) and 'Location' in self.response.headers:
             return self._make_nav(uri=self.response.headers['Location'])
+
         elif self.response.status_code == httplib.OK:
-            return self._create_non_idempotent_response()
-            #return NonIdempotentResponse(parent=self, response=self.response)
+            # Only Status expected to return a HAL Response
+
+            if method.upper() in ['POST', 'DELETE']:
+                return self._create_non_idempotent_response()
+            elif method.upper() == 'GET':
+                return self._populate_navigator_properties()
         else:
             '''
                 Expected hits:
@@ -462,48 +478,41 @@ class HALNavigator(object):
                 '''
             return self.status
 
-    @restrict_to(methods='GET', templated=True)
-    def fetch(self, raise_exc=True):
-        """Like __call__, but doesn't cache, always makes the request"""
-        self.get_http_response(
-            self.session.get, raise_exc=raise_exc)
-
-        try:
-            body = json.loads(self.response.text)
-        except ValueError:
-            if raise_exc:
-                raise UnexpectedlyNotJSON(
-                    "The resource at {.uri} wasn't valid JSON", self.response)
-            else:
-                return
-
-        self._populate_navigator_properties(body)
-
-        return self.state.copy()
-
     def _fetch_hal_and_create_resource(self, http_method_fn,
-                                      body=None,
-                                      raise_exc=True,
-                                      content_type='application/json',
-                                      json_cls=None,
-                                      headers=None, ):
+                                       body=None,
+                                       raise_exc=True,
+                                       content_type='application/json',
+                                       json_cls=None,
+                                       headers=None, ):
+
         self.get_http_response(http_method_fn,
                                body,
                                raise_exc,
                                content_type,
                                json_cls,
-                               headers,
-        )
-        return self.create_navigator_or_non_idempotent_resp()
+                               headers)
 
-    @restrict_to(methods='POST',templated=True)
+        return self.create_navigator_or_non_idempotent_resp(http_method_fn.__name__)
+
+
+    @restrict_to(methods='GET', templated=True)
+    def get(self, raise_exc=True):
+        """Like __call__, but doesn't cache, always makes the request"""
+        # self._fetch_hal_and_create_resource(self.session.get)
+        self.get_http_response(self.session.get, raise_exc=raise_exc)
+        self._populate_navigator_properties(raise_exc)
+        return self.state.copy()
+
+    fetch = get
+
+    @restrict_to(methods='POST', templated=True)
     def create(self, *args, **kwargs):
-        """Performs an HTTP POST to the server """
+        """Performs an HTTP POST to the server, to create source(s) """
         return self._fetch_hal_and_create_resource(self.session.post, *args, **kwargs)
 
     post = create
 
-    @restrict_to(methods='DELETE',templated=True)
-    def delete(self, **kwargs):
+    @restrict_to(methods='DELETE', templated=True)
+    def delete(self, *args, **kwargs):
         """Performs an HTTP DELETE to the server, to delete resource(s)."""
-        return self._fetch_hal_and_create_resource(self.session.delete, **kwargs)
+        return self._fetch_hal_and_create_resource(self.session.delete, *args, **kwargs)

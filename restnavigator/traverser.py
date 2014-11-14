@@ -2,7 +2,6 @@ from restnavigator import HALNavigator
 
 
 class HALTraversor(object):
-
     def __init__(self, root_uri):
         self.navigator = HALNavigator(root_uri)
         self.template_parameters = None
@@ -88,8 +87,8 @@ class HALTraversor(object):
     @staticmethod
     def _select_info_for_a_sequence(info_set={}, method=None, rel_name=None):
         return info_set.get(rel_name) \
-            or info_set.get(method) \
-            or info_set.get('default', {})
+               or info_set.get(method) \
+               or info_set.get('default', {})
 
     def with_conditions(self, **conditions_dict):
         """
@@ -179,7 +178,7 @@ class HALTraversor(object):
 # T = HALTraversor('http://haltalk.herokuapp.com/')
 # template_parameters = {'name': 'test321', 'foo': 'boo'}
 # condition = {'default': (
-#                             ('response.status.code', lambda x: x == 200),
+# ('response.status.code', lambda x: x == 200),
 #                             ('response.text', lambda x: 200 in x),
 #                             ('links', lambda x: 'ht:author' in x)
 #                         ),
@@ -201,4 +200,5 @@ chset = J.with_template_parameters(
 print chset.links
 
 from pprint import pprint
+
 pprint(chset())

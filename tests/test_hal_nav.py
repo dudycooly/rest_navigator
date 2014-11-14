@@ -168,7 +168,7 @@ def test_HALNavigator__getitem_self_link():
         register_hal(uri, title=title)
 
         N = HN.HALNavigator(uri)
-        N()  # fetch it
+        N()  # get it
         assert N.title == title
 
 
@@ -435,7 +435,7 @@ def test_HALNavigator__raise_exc(status, raise_exc):
             with pytest.raises(HN.HALNavigatorError):
                 N['next']()
             try:
-                N['next'].fetch()
+                N['next'].get()
             except HN.HALNavigatorError as hn:
                 assert hn.nav.status[0] == status
         else:
@@ -724,7 +724,7 @@ def test_HALNavigator__authenticate(random_string):
         N2_auth(raise_exc=False)
         assert N2_auth.status == (401, 'Unauthorized')
         N2.authenticate(toy_auth)
-        assert N2_auth.fetch()['authenticated']
+        assert N2_auth.get()['authenticated']
 
 
 def test_HALNavigator__not_json():
