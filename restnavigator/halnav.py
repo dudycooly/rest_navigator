@@ -52,7 +52,7 @@ def restrict_to(methods=[], templated=None, idempotent=None):
                         'Maybe you want this object\'s .parent attribute, '
                         'or possibly one of the resources in .links'.format(fn.__name__))
 
-            if self.strict_validation:
+            if self.method_validation:
                 allowed_methods = [methods] if isinstance(methods, basestring) else methods
                 if allowed_methods is not []:
                     if self.method.lower() not in [method.lower() for method in allowed_methods]:
@@ -133,7 +133,7 @@ class HALNavigator(object):
         # HALNavigator
         self._id_map = WeakValueDictionary({self.root: self})
         self.method = 'GET'
-        self.strict_validation = False
+        self.method_validation = False
 
     @classmethod
     def init_from_hal_json(cls, root_uri, hal_response):
@@ -158,15 +158,15 @@ class HALNavigator(object):
                           response=self.response)
 
         NIR = self.clone_navigator(attributes)
-        NIR.parent = self
         NIR.idempotent = False
+        NIR.parent = self
         # The following attributes from parent does not applicable for
         # NonIdempotentResponse
         NIR.templated = False
         NIR.parameters = None
         NIR.method = "NONE"
 
-        NIR.strict_validation = True
+        NIR.method_validation = True
         # NonIdempotent Response may have plain text as opposed to hal or json response
         #hence, turn off exception
 
