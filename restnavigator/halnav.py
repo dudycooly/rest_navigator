@@ -66,8 +66,8 @@ def restrict_to(methods=[], templated=None, idempotent=None):
                 if self.templated:
                     raise exc.AmbiguousNavigationError(
                         'This is a templated Navigator. You must provide values for '
-                        'the template parameters before fetching the resource or else '
-                        'explicitly null them out with the syntax: N[:]')
+                        'the template parameters before {}ing the resource or else '
+                        'explicitly null them out with the syntax: N[:]'.format(fn.__name__))
 
             return fn(self, *args, **qargs)
 
@@ -160,17 +160,17 @@ class HALNavigator(object):
         NIR = self.clone_navigator(attributes)
         NIR.idempotent = False
         NIR.parent = self
+
+        # NonIdempotent Response may have plain text as opposed to hal or json response
+        #hence, turn off exception
+        NIR._populate_navigator_properties(raise_exc=False)
         # The following attributes from parent does not applicable for
         # NonIdempotentResponse
         NIR.templated = False
         NIR.parameters = None
-        NIR.method = "NONE"
-
+        NIR.method = 'GET'
         NIR.method_validation = True
-        # NonIdempotent Response may have plain text as opposed to hal or json response
-        #hence, turn off exception
 
-        NIR._populate_navigator_properties(raise_exc=False)
         return NIR
 
     @staticmethod
@@ -258,6 +258,7 @@ class HALNavigator(object):
         except KeyError:
             raise StopIteration()
 
+    @restrict_to(methods=['GET'])
     def __getitem__(self, getitem_args):
         r"""Subselector for a HALNavigator"""
 
@@ -346,21 +347,25 @@ class HALNavigator(object):
                     "The resource at {.uri} wasn't valid JSON", self.response)
             self.state = {}
             self._links = utils.LinkDict(self.default_curie, {})
+            self.method = None
             return
 
-        self._links = self._make_linked_nav_from(body)
-        self.title = (body.get('_links', {})
-                      .get('self', {})
-                      .get('title', self.title))
-        if 'curies' in body.get('_links', {}):
-            curies = body['_links']['curies']
-            self.curies = {curie['name']: curie['href'] for curie in curies}
-        self.state = self.get_state(body)
+        self.method = body.get('method', 'GET')
+        if self.method == 'GET':
+            self._links = self._make_linked_nav_from(body)
+            self.title = (body.get('_links', {})
+                          .get('self', {})
+                          .get('title', self.title))
+            if 'curies' in body.get('_links', {}):
+                curies = body['_links']['curies']
+                self.curies = {curie['name']: curie['href'] for curie in curies}
+            self.state = self.get_state(body)
 
     def clone_navigator(self, params):
         """ Creates a shallow copy of the HALNavigator that extra attributes can
         be set on."""
         cp = copy.copy(self)
+        cp.idempotent = True
         cp._links = None
         cp.response = None
         cp.state = None
@@ -495,13 +500,13 @@ class HALNavigator(object):
         return self.create_navigator_or_non_idempotent_resp(http_method_fn.__name__)
 
 
-    @restrict_to(methods='GET', templated=True)
+    @restrict_to(methods='GET', templated=True, idempotent=True)
     def get(self, raise_exc=True):
         """Like __call__, but doesn't cache, always makes the request"""
         # self._fetch_hal_and_create_resource(self.session.get)
         self.get_http_response(self.session.get, raise_exc=raise_exc)
         self._populate_navigator_properties(raise_exc)
-        return self.state.copy()
+        return self.state
 
     fetch = get
 
