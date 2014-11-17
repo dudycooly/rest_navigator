@@ -1,8 +1,11 @@
 from restnavigator import HALNavigator
+from pprint import pprint
 
 
 class HALTraversor(object):
-    def __init__(self, root_uri):
+    def __init__(self, root_uri=None):
+        if root_uri is None:
+            raise 'Need to provide root uri to initialize a HALTraversor. e.g. HALTraversor("http://localhost:9077")'
         self.navigator = HALNavigator(root_uri)
         self.template_parameters = None
         self.request_options_dict = None
@@ -163,42 +166,37 @@ class HALTraversor(object):
                 method = None
 
             cursor = cursor[rel_name]
-            if cursor.templated:
-                cursor = cursor.expand(**self.template_parameters)
-            self.apply_request_options(method, rel_name)
+            if isinstance(cursor,HALNavigator):
+                if cursor.templated:
+                    cursor = cursor.expand(**self.template_parameters)
+                self.apply_request_options(method, rel_name)
 
-            if method == 'post':
-                cursor = cursor.create({})
+                if method == 'post':
+                    cursor = cursor.create({})
 
-        print cursor
-        print cursor.links
         return cursor
 
-#
-# T = HALTraversor('http://haltalk.herokuapp.com/')
-# template_parameters = {'name': 'test321', 'foo': 'boo'}
-# condition = {'default': (
-# ('response.status.code', lambda x: x == 200),
-#                             ('response.text', lambda x: 200 in x),
-#                             ('links', lambda x: 'ht:author' in x)
-#                         ),
-#              'post': (),
-#              'get': (),
-#              'ht:ln': (),
-# }
-#
-# r = T.with_template_parameters(**template_parameters).with_conditions().follow('ht:me',
-#                                                                               'ht:posts',
-#                                                                               'ht:author')
+if __name__ == '__main__':
+    # T = HALTraversor('http://haltalk.herokuapp.com/')
+    # template_parameters = {'name': 'test321', 'foo': 'boo'}
+    # condition = {'default': (
+    # ('response.status.code', lambda x: x == 200),
+    #                             ('response.text', lambda x: 200 in x),
+    #                             ('links', lambda x: 'ht:author' in x)
+    #                         ),
+    #              'post': (),
+    #              'get': (),
+    #              'ht:ln': (),
+    # }
+    #
+    # r = T.with_template_parameters(**template_parameters).with_conditions().follow('ht:me',
+    #                                                                               'ht:posts',
+    #                                                                               'ht:author')
 
-J = HALTraversor('http://0.0.0.0:7777/')
-template_parameters = {'channel': 'online',
-                       'date': '2014-11-03',
-                       'static_id': 'BOX_PACKAGE'}
-chset = J.with_template_parameters(
-    **template_parameters).follow(('create_basket', 'post'), 'products')
-print chset.links
+    J = HALTraversor('http://0.0.0.0:7777/')
+    template_parameters = {'channel': 'online',
+                           'date': '2014-11-03',
+                           'static_id': 'BOX_PACKAGE'}
+    print J.with_template_parameters(**template_parameters).follow(('create_basket', 'post'), 'products', 'children',)
+    pass
 
-from pprint import pprint
-
-pprint(chset())

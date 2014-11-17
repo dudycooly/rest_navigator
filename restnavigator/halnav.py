@@ -55,7 +55,7 @@ def restrict_to(methods=[], templated=None, idempotent=None):
             if self.method_validation:
                 allowed_methods = [methods] if isinstance(methods, basestring) else methods
                 if allowed_methods is not []:
-                    if self.method.lower() not in [method.lower() for method in allowed_methods]:
+                    if not set(allowed_methods).intersection(set(self.method)):
                         raise exc.InvalidOperation('"{}" is permitted only for link supporting "{}" methods\n'
                                                    'Supported method(s) for {} is "{}"'
                                                    .format(fn.__name__,
@@ -65,9 +65,9 @@ def restrict_to(methods=[], templated=None, idempotent=None):
             if templated is not None:
                 if self.templated:
                     raise exc.AmbiguousNavigationError(
-                        'This is a templated Navigator. You must provide values for '
+                        '{} is a templated Navigator. You must provide values for '
                         'the template parameters before {}ing the resource or else '
-                        'explicitly null them out with the syntax: N[:]'.format(fn.__name__))
+                        'explicitly null them out with the syntax: N[:]'.format(self,fn.__name__))
 
             return fn(self, *args, **qargs)
 
@@ -132,7 +132,7 @@ class HALNavigator(object):
         # This is the identity map shared by all descendents of this
         # HALNavigator
         self._id_map = WeakValueDictionary({self.root: self})
-        self.method = 'GET'
+        self.method = ['GET']
         self.method_validation = False
 
     @classmethod
@@ -350,8 +350,9 @@ class HALNavigator(object):
             self.method = None
             return
 
-        self.method = body.get('method', 'GET')
-        if self.method == 'GET':
+        self.method = [method.upper() for method in body.get('method', ['GET'])]
+
+        if 'GET' in self.method:
             self._links = self._make_linked_nav_from(body)
             self.title = (body.get('_links', {})
                           .get('self', {})
